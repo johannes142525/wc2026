@@ -187,19 +187,7 @@ function TVBadge({s}) {
     fontWeight:700,padding:"1px 5px",borderRadius:3,marginRight:2,whiteSpace:"nowrap"}}>{s}</span>;
 }
 
-// スコア入力ミニフォーム
-function ScoreInput({value, onChange}) {
-  return (
-    <input
-      type="number" min="0" max="20"
-      value={value === "" ? "" : value}
-      onChange={e => onChange(e.target.value)}
-      style={{width:32,background:"#21262d",border:"1px solid #30363d",borderRadius:4,
-        color:"#e6edf3",fontSize:"0.9rem",fontWeight:700,textAlign:"center",padding:"2px 0",
-        appearance:"textfield"}}
-    />
-  );
-}
+
 
 // ─── 順位表コンポーネント ─────────────────────────────────────────
 function GroupTable({groupKey, stats}) {
@@ -215,10 +203,10 @@ function GroupTable({groupKey, stats}) {
       marginBottom:10,overflow:"hidden"}}>
       <div style={{background:"#21262d",padding:"5px 10px",fontSize:"0.76rem",
         fontWeight:800,color:"#8b949e",letterSpacing:"0.05em"}}>{groupKey}組</div>
-      {/* ヘッダ: 勝点 | チーム名 | 試 勝 分 負 差 */}
-      <div style={{display:"grid",gridTemplateColumns:"30px 1fr 22px 20px 20px 20px 28px",
+      {/* ヘッダ: 順位 | チーム名 | 勝点 試 勝 分 負 差 */}
+      <div style={{display:"grid",gridTemplateColumns:"14px 1fr 30px 22px 20px 20px 20px 28px",
         gap:"0 3px",padding:"3px 10px 2px",alignItems:"center"}}>
-        {["勝点","","試","勝","分","負","差"].map((h,i)=>(
+        {["","","勝点","試","勝","分","負","差"].map((h,i)=>(
           <span key={i} style={{fontSize:"0.62rem",color:"#8b949e",textAlign:"right"}}>{h}</span>
         ))}
       </div>
@@ -229,22 +217,19 @@ function GroupTable({groupKey, stats}) {
         const gdStr = t.gd > 0 ? `+${t.gd}` : `${t.gd}`;
         return (
           <div key={t.name} style={{display:"grid",
-            gridTemplateColumns:"30px 1fr 22px 20px 20px 20px 28px",
+            gridTemplateColumns:"14px 1fr 30px 22px 20px 20px 20px 28px",
             gap:"0 3px",padding:"5px 10px",alignItems:"center",
             borderTop:"1px solid #21262d",
             background:isJapan?"rgba(31,111,235,0.08)":"transparent"}}>
-            {/* 勝点（左端・大きく） */}
-            <span style={{fontFamily:"monospace",fontSize:"0.88rem",fontWeight:800,
-              color:rank<=2?"#2ea043":rank===3?"#f0883e":"#8b949e",textAlign:"right"}}>
-              {t.pts}
-            </span>
-            {/* チーム名（順位バッジ付き） */}
-            <div style={{display:"flex",alignItems:"center",gap:4,overflow:"hidden"}}>
-              <span style={{fontSize:"0.68rem",fontWeight:800,color:rankColor,flexShrink:0,width:12}}>{rank}</span>
-              <span style={{fontSize:"0.8rem",fontWeight:isJapan?700:400,
-                color:isJapan?"#79c0ff":"#e6edf3",
-                overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{t.name}</span>
-            </div>
+            {/* 順位バッジ */}
+            <span style={{fontSize:"0.68rem",fontWeight:800,color:rankColor,textAlign:"center"}}>{rank}</span>
+            {/* チーム名 */}
+            <span style={{fontSize:"0.8rem",fontWeight:isJapan?700:400,
+              color:isJapan?"#79c0ff":"#e6edf3",
+              overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{t.name}</span>
+            {/* 勝点（強調） */}
+            <span style={{fontFamily:"monospace",fontSize:"0.88rem",fontWeight:800,textAlign:"right",
+              color:rank<=2?"#2ea043":rank===3?"#f0883e":"#8b949e"}}>{t.pts}</span>
             {/* 試 勝 分 負 */}
             {[t.played, t.w, t.d, t.l].map((v,ci) => (
               <span key={ci} style={{fontFamily:"monospace",fontSize:"0.76rem",
@@ -265,22 +250,24 @@ function GroupTable({groupKey, stats}) {
   );
 }
 
-// ─── 試合カード（スコア入力対応） ────────────────────────────────
-function MatchRow({m, now, scores, onScore}) {
+// ─── 試合カード（スコア自動取得・ネタバレ防止対応） ──────────────
+function MatchRow({m, now, scores, spoiler}) {
   const ko  = koDate(m.date, m.time);
   const end = new Date(ko.getTime()+110*60*1000);
   const live = now>=ko && now<=end;
   const past = now>end;
-  const sc = scores[m.id] || {h:"", a:""};
-  const hasScore = sc.h !== "" && sc.a !== "";
+  const sc = scores[m.id];
+  const hasScore = sc && sc.h!=null && sc.a!=null;
+  // ネタバレ防止ON＋終了試合 → タップで解除
+  const [revealed, setRevealed] = useState(false);
+  const hidden = spoiler && past && !live;
 
   return (
     <div style={{background:m.japan?"linear-gradient(135deg,#1a1f2e,#161b22)":"#161b22",
       border:`1px solid ${live?"#f0883e":m.japan?"#1f6feb":"#21262d"}`,
       borderRadius:8,padding:"8px 10px",marginBottom:5,opacity:past&&!hasScore?0.5:1}}>
-      {/* 1行目：時刻・チーム名・スコア・放送 */}
+      {/* 1行目：時刻・チーム名・スコア */}
       <div style={{display:"flex",alignItems:"center",gap:6}}>
-        {/* 時刻 */}
         <span style={{fontFamily:"monospace",fontSize:"0.95rem",fontWeight:800,
           flexShrink:0,minWidth:44,
           color:live?"#f0883e":past?"#8b949e":"#e6edf3"}}>
@@ -289,25 +276,32 @@ function MatchRow({m, now, scores, onScore}) {
         {live&&<span style={{background:"#f0883e",color:"#fff",fontSize:"0.58rem",
           fontWeight:800,padding:"1px 4px",borderRadius:3,flexShrink:0}}>LIVE</span>}
 
-        {/* ホーム */}
         <span style={{fontSize:"0.82rem",fontWeight:700,flex:1,
           color:m.japan?"#79c0ff":"#e6edf3",
           overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",textAlign:"right"}}>
           {m.home}
         </span>
 
-        {/* スコア欄 */}
-        {m.id ? (
-          <div style={{display:"flex",alignItems:"center",gap:3,flexShrink:0}}>
-            <ScoreInput value={sc.h} onChange={v=>onScore(m.id,"h",v,m)}/>
-            <span style={{color:"#8b949e",fontSize:"0.8rem",fontWeight:700}}>-</span>
-            <ScoreInput value={sc.a} onChange={v=>onScore(m.id,"a",v,m)}/>
-          </div>
-        ) : (
-          <span style={{color:"#8b949e",fontSize:"0.8rem",padding:"0 6px"}}>vs</span>
-        )}
+        {/* スコア表示部 */}
+        <div style={{flexShrink:0,minWidth:52,textAlign:"center"}}>
+          {hasScore ? (
+            hidden && !revealed ? (
+              <button onClick={()=>setRevealed(true)} style={{
+                background:"#21262d",border:"1px solid #30363d",borderRadius:4,
+                color:"#8b949e",fontSize:"0.62rem",padding:"2px 6px",cursor:"pointer"}}>
+                終了 👁
+              </button>
+            ) : (
+              <span style={{fontFamily:"monospace",fontSize:"1rem",fontWeight:800,
+                color:live?"#f0883e":"#e6edf3",letterSpacing:1}}>
+                {sc.h} - {sc.a}
+              </span>
+            )
+          ) : (
+            <span style={{color:"#8b949e",fontSize:"0.8rem"}}>vs</span>
+          )}
+        </div>
 
-        {/* アウェイ */}
         <span style={{fontSize:"0.82rem",fontWeight:700,flex:1,
           color:m.japan?"#79c0ff":"#e6edf3",
           overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
@@ -323,8 +317,6 @@ function MatchRow({m, now, scores, onScore}) {
             :<span style={{fontSize:"0.62rem",color:"#8b949e"}}>DAZN</span>}
         </div>
       </div>
-
-      {/* 3位通過注釈 */}
       {m.thirdNote&&<div style={{fontSize:"0.62rem",color:"#e6af00",marginTop:2}}>
         🃏 3位通過枠：{m.thirdNote}</div>}
     </div>
@@ -342,352 +334,4 @@ function BracketRow({s, now}) {
   const end = new Date(ko.getTime()+110*60*1000);
   const live=now>=ko&&now<=end, past=now>end;
   return (
-    <div style={{background:"#161b22",border:`1px solid ${live?"#f0883e":"#21262d"}`,
-      borderRadius:8,padding:"8px 10px",marginBottom:5,opacity:past?0.45:1}}>
-      <div style={{display:"flex",alignItems:"flex-start",gap:8}}>
-        <div style={{flexShrink:0,minWidth:58}}>
-          <div style={{fontSize:"0.62rem",color:"#8b949e"}}>{fmtDate(td)}</div>
-          <div style={{fontFamily:"monospace",fontSize:"0.9rem",fontWeight:800,
-            color:live?"#f0883e":past?"#8b949e":"#e6edf3"}}>{jstDisp(s.date,s.time)}</div>
-        </div>
-        <div style={{flex:1,minWidth:0}}>
-          <div style={{fontSize:"0.68rem",color:"#8b949e",marginBottom:1}}>{s.label||`M${s.match}`}</div>
-          <div style={{fontSize:"0.8rem",fontWeight:700,color:"#e6edf3"}}>
-            {homeL}<span style={{color:"#8b949e",margin:"0 4px",fontWeight:400,fontSize:"0.72rem"}}>vs</span>{awayL}
-          </div>
-          {isThird&&<div style={{fontSize:"0.62rem",color:"#e6af00",marginTop:2,
-            background:"#1f1a00",border:"1px solid #3a3000",borderRadius:3,
-            padding:"1px 5px",display:"inline-block"}}>{thirdGs}組の3位チームが入る枠</div>}
-        </div>
-        <div style={{flexShrink:0,display:"flex",flexWrap:"wrap",gap:2,justifyContent:"flex-end"}}>
-          {s.tv&&s.tv.length>0?s.tv.map(t=><TVBadge key={t} s={t}/>)
-            :<span style={{fontSize:"0.62rem",color:"#8b949e"}}>DAZN</span>}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ─── メイン ──────────────────────────────────────────────────────
-export default function App() {
-  const [now, setNow] = useState(new Date());
-  useEffect(()=>{
-    const t = setInterval(()=>setNow(new Date()), 30000);
-    return ()=>clearInterval(t);
-  },[]);
-
-  const [tab, setTab]       = useState("schedule");
-  const [filter, setFilter] = useState("all");
-  const [phase, setPhase]   = useState("all");
-  const [tweetOpen, setTweetOpen] = useState(false);
-  const [copied, setCopied] = useState(false);
-
-  // スコア state: { [matchId]: {h: number|"", a: number|""} }
-  const [scores, setScores] = useState({});
-
-  // グループ成績 state
-  const [groupStats, setGroupStats] = useState(()=>{
-    const s={};
-    Object.entries(GROUPS).forEach(([k,teams])=>{ s[k]=makeInitialStats(teams); });
-    return s;
-  });
-
-  // スコア入力 → 順位表に反映
-  const handleScore = useCallback((id, side, val, m) => {
-    setScores(prev => {
-      const old = prev[id] || {h:"",a:""};
-      const next = {...prev, [id]: {...old, [side]: val}};
-
-      // 両方入力済みなら順位表を更新
-      const sc = next[id];
-      const hv = parseInt(sc.h), av = parseInt(sc.a);
-      if (!isNaN(hv) && !isNaN(av)) {
-        const hTeam = m.home, aTeam = m.away;
-        const hGroup = TEAM_GROUP[hTeam], aGroup = TEAM_GROUP[aTeam];
-        if (hGroup && aGroup && hGroup === aGroup) {
-          setGroupStats(prev2 => {
-            const arr = prev2[hGroup].map(t => {
-              if (t.name === hTeam) {
-                const w=hv>av?1:0, d=hv===av?1:0, l=hv<av?1:0;
-                return {...t, w, d, l, gf:hv, ga:av};
-              }
-              if (t.name === aTeam) {
-                const w=av>hv?1:0, d=av===hv?1:0, l=av<hv?1:0;
-                return {...t, w, d, l, gf:av, ga:hv};
-              }
-              return t;
-            });
-            return {...prev2, [hGroup]: arr};
-          });
-        }
-      }
-      return next;
-    });
-  }, []);
-
-  // 今日ジャンプ用 ref マップ
-  const dateRefs = useRef({});
-  const scheduleContainerRef = useRef(null);
-
-  const scrollToToday = useCallback(()=>{
-    const today = todayJST();
-    const ref = dateRefs.current[today];
-    if (ref) {
-      ref.scrollIntoView({behavior:"smooth", block:"start"});
-    } else {
-      // 今日がない場合は一番近い未来の日付へ
-      const future = Object.keys(dateRefs.current)
-        .filter(d => d >= today)
-        .sort()[0];
-      if (future) dateRefs.current[future].scrollIntoView({behavior:"smooth",block:"start"});
-    }
-  },[]);
-
-  // 日程タブを開いたとき自動で今日へスクロール
-  useEffect(()=>{
-    if (tab==="schedule") {
-      setTimeout(scrollToToday, 100);
-    }
-  },[tab]);
-
-  // 全試合リスト統合
-  const allMatches = useMemo(()=>{
-    const gm = GROUP_MATCHES.map(m=>({...m, phase:"group"}));
-    const r32 = R32_SLOTS.map(s=>({
-      date:s.date,time:s.time,phase:"r32",tv:s.tv,
-      home:resolveSlot(s.home),
-      away:s.away.startsWith("3rd_")
-        ?`3位通過枠(${s.away.replace("3rd_","").split("").join("・")}組)`
-        :resolveSlot(s.away),
-      groupLabel:`R32 M${s.match}`,
-      thirdNote:s.away.startsWith("3rd_")?s.away.replace("3rd_","").split("").join("・")+"組":null,
-    }));
-    const r16 = R16_SLOTS.map(s=>({date:s.date,time:s.time,phase:"r16",tv:s.tv,
-      home:s.home,away:s.away,groupLabel:`R16 M${s.match}`}));
-    const qf  = QF_SLOTS.map(s=>({date:s.date,time:s.time,phase:"qf",tv:s.tv,
-      home:"TBD",away:"TBD",groupLabel:`準々決勝 M${s.match}`}));
-    const sf  = SF_SLOTS.map(s=>({date:s.date,time:s.time,phase:"sf",tv:s.tv,
-      home:"TBD",away:"TBD",groupLabel:`準決勝 M${s.match}`}));
-    const fin = FIN_SLOTS.map(s=>({date:s.date,time:s.time,phase:"final",tv:s.tv,
-      home:"TBD",away:"TBD",groupLabel:s.label}));
-    return [...gm,...r32,...r16,...qf,...sf,...fin];
-  },[]);
-
-  const within24h = useMemo(()=>{
-    const lim = new Date(now.getTime()+24*60*60*1000);
-    return allMatches.filter(m=>{const k=koDate(m.date,m.time);return k>=now&&k<=lim;});
-  },[allMatches,now]);
-
-  const filtered = useMemo(()=>
-    allMatches.filter(m=>{
-      if (phase==="group"&&m.phase!=="group") return false;
-      if (phase==="knockout"&&m.phase==="group") return false;
-      if (filter==="tv"&&(!m.tv||m.tv.length===0)) return false;
-      if (filter==="japan"&&!m.japan) return false;
-      return true; // 過去試合も表示（スコア入力のため）
-    })
-  ,[allMatches,filter,phase]);
-
-  const groupedDates = useMemo(()=>{
-    const map={};
-    filtered.forEach(m=>{const k=dispDate(m.date,m.time);(map[k]=map[k]||[]).push(m);});
-    return Object.entries(map).sort(([a],[b])=>a.localeCompare(b));
-  },[filtered]);
-
-  const tweetText = useMemo(()=>{
-    if (!within24h.length) return "";
-    const lines=within24h.map(m=>{
-      const t=jstDisp(m.date,m.time);
-      const d=fmtDate(dispDate(m.date,m.time));
-      const tv=m.tv&&m.tv.length>0?` 📺${m.tv.join("/")}`:" 📡DAZN";
-      return `${d} ${t} ${m.home} vs ${m.away}（${m.groupLabel||m.group}）${tv}`;
-    });
-    return `⚽ #W杯2026 直近の試合\n\n${lines.join("\n")}\n\n#FIFAWorldCup`;
-  },[within24h]);
-
-  const today = todayJST();
-
-  return (
-    <div style={{background:"#0d1117",minHeight:"100vh",color:"#e6edf3",
-      fontFamily:"'Hiragino Sans','Meiryo',sans-serif",maxWidth:780,margin:"0 auto"}}>
-
-      {/* ─── ヘッダー（sticky） ─── */}
-      <div style={{background:"linear-gradient(135deg,#1a2e1a,#0d1117)",
-        borderBottom:"2px solid #2ea043",padding:"12px 12px 0",
-        position:"sticky",top:0,zIndex:10}}>
-        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:10}}>
-          <div style={{display:"flex",alignItems:"center",gap:8}}>
-            <span style={{fontSize:"1.4rem"}}>⚽</span>
-            <div>
-              <div style={{fontSize:"1.05rem",fontWeight:800,color:"#2ea043"}}>W杯 2026 番組表</div>
-              <div style={{fontSize:"0.66rem",color:"#8b949e"}}>北中米大会 · JST</div>
-            </div>
-          </div>
-          {/* 今日ボタン（日程タブのみ表示） */}
-          {tab==="schedule"&&(
-            <button onClick={scrollToToday} style={{
-              background:"#21262d",color:"#e6edf3",border:"1px solid #30363d",
-              borderRadius:20,padding:"5px 14px",fontSize:"0.76rem",
-              cursor:"pointer",fontWeight:700,display:"flex",alignItems:"center",gap:4}}>
-              📅 今日
-            </button>
-          )}
-        </div>
-        <div style={{display:"flex",gap:0}}>
-          {[["schedule","📅 日程"],["groups","🏆 順位表"],["bracket","🔀 決勝T"]].map(([v,l])=>(
-            <button key={v} onClick={()=>setTab(v)} style={{
-              flex:1,background:"transparent",border:"none",
-              borderBottom:`2px solid ${tab===v?"#2ea043":"transparent"}`,
-              color:tab===v?"#2ea043":"#8b949e",
-              padding:"8px 4px",fontSize:"0.82rem",cursor:"pointer",fontWeight:tab===v?700:400
-            }}>{l}</button>
-          ))}
-        </div>
-      </div>
-
-      <div style={{padding:"10px 12px 40px"}}>
-
-        {/* ===== 日程タブ ===== */}
-        {tab==="schedule"&&<>
-          {/* フィルタ行 */}
-          <div style={{display:"flex",gap:4,flexWrap:"wrap",marginBottom:8}}>
-            {[["all","全試合"],["tv","📺 地上波"],["japan","🇯🇵 日本戦"]].map(([v,l])=>(
-              <button key={v} onClick={()=>setFilter(v)} style={{
-                background:filter===v?"#2ea043":"#21262d",color:filter===v?"#fff":"#8b949e",
-                border:`1px solid ${filter===v?"#2ea043":"#30363d"}`,borderRadius:16,
-                padding:"3px 10px",fontSize:"0.72rem",cursor:"pointer",fontWeight:filter===v?700:400
-              }}>{l}</button>
-            ))}
-            <span style={{width:1,background:"#30363d",margin:"0 2px"}}/>
-            {[["all","全期間"],["group","GL"],["knockout","決勝T"]].map(([v,l])=>(
-              <button key={v} onClick={()=>setPhase(v)} style={{
-                background:phase===v?"#1f6feb":"#21262d",color:phase===v?"#fff":"#8b949e",
-                border:`1px solid ${phase===v?"#1f6feb":"#30363d"}`,borderRadius:16,
-                padding:"3px 10px",fontSize:"0.72rem",cursor:"pointer",fontWeight:phase===v?700:400
-              }}>{l}</button>
-            ))}
-          </div>
-
-          {/* Xポスト */}
-          <button onClick={()=>setTweetOpen(!tweetOpen)} style={{
-            background:tweetOpen?"#1d9bf0":"#21262d",color:tweetOpen?"#fff":"#8b949e",
-            border:`1px solid ${tweetOpen?"#1d9bf0":"#30363d"}`,borderRadius:8,
-            padding:"5px 12px",fontSize:"0.74rem",cursor:"pointer",fontWeight:600,
-            display:"flex",alignItems:"center",gap:5,marginBottom:8}}>
-            𝕏 24h以内をポスト
-            {within24h.length>0&&<span style={{background:"#f85149",color:"#fff",
-              borderRadius:"50%",width:16,height:16,fontSize:"0.62rem",
-              display:"flex",alignItems:"center",justifyContent:"center",fontWeight:800}}>
-              {within24h.length}</span>}
-          </button>
-          {tweetOpen&&(
-            <div style={{background:"#161b22",border:"1px solid #1d9bf0",borderRadius:8,
-              padding:12,marginBottom:10}}>
-              {within24h.length===0
-                ?<div style={{color:"#8b949e",fontSize:"0.8rem"}}>24時間以内に試合はありません</div>
-                :<>
-                  <pre style={{fontFamily:"inherit",fontSize:"0.76rem",color:"#e6edf3",
-                    whiteSpace:"pre-wrap",margin:"0 0 8px",lineHeight:1.6}}>{tweetText}</pre>
-                  <div style={{display:"flex",gap:6}}>
-                    <button onClick={()=>{navigator.clipboard.writeText(tweetText);
-                      setCopied(true);setTimeout(()=>setCopied(false),2000);}} style={{
-                      background:"#21262d",color:copied?"#2ea043":"#e6edf3",
-                      border:"1px solid #30363d",borderRadius:6,padding:"4px 10px",
-                      fontSize:"0.72rem",cursor:"pointer"}}>{copied?"✓ コピー済":"📋 コピー"}</button>
-                    <button onClick={()=>window.open(`https://x.com/intent/tweet?text=${encodeURIComponent(tweetText)}`,"_blank")} style={{
-                      background:"#1d9bf0",color:"#fff",border:"none",borderRadius:6,
-                      padding:"4px 10px",fontSize:"0.72rem",cursor:"pointer",fontWeight:700}}>
-                      𝕏 ポスト</button>
-                  </div>
-                </>}
-            </div>
-          )}
-
-          {/* 試合一覧 */}
-          {groupedDates.length===0
-            ?<div style={{textAlign:"center",color:"#8b949e",padding:"40px 0"}}>該当する試合はありません</div>
-            :groupedDates.map(([d,ms])=>(
-              <div key={d} ref={el=>{if(el) dateRefs.current[d]=el;}} style={{marginBottom:12}}>
-                <div style={{
-                  fontSize:"0.76rem",fontWeight:700,padding:"4px 8px",
-                  borderBottom:"1px solid #21262d",marginBottom:5,letterSpacing:"0.04em",
-                  display:"flex",alignItems:"center",gap:6,
-                  color: d===today?"#e6af00":"#8b949e",
-                  background: d===today?"rgba(230,175,0,0.06)":"transparent",
-                  borderRadius: d===today?"6px 6px 0 0":0,
-                }}>
-                  {d===today&&<span style={{background:"#e6af00",color:"#000",fontSize:"0.6rem",
-                    fontWeight:800,padding:"1px 5px",borderRadius:3}}>TODAY</span>}
-                  {fmtDate(d)}
-                </div>
-                {ms.map((m,i)=><MatchRow key={i} m={m} now={now} scores={scores} onScore={handleScore}/>)}
-              </div>
-            ))}
-
-          <div style={{borderTop:"1px solid #21262d",paddingTop:10,marginTop:4,
-            display:"flex",gap:8,flexWrap:"wrap",fontSize:"0.66rem",color:"#8b949e",alignItems:"center"}}>
-            {Object.entries(TV_COLOR).map(([k,v])=>(
-              <span key={k} style={{display:"flex",alignItems:"center",gap:3}}>
-                <span style={{background:v,width:7,height:7,borderRadius:2,display:"inline-block"}}/>
-                {k}
-              </span>
-            ))}
-            <span>BSP4K 全試合</span>
-          </div>
-          <div style={{fontSize:"0.62rem",color:"#8b949e",marginTop:4}}>
-            💡 スコア欄に数字を入力すると順位表に反映されます
-          </div>
-        </>}
-
-        {/* ===== 順位表タブ ===== */}
-        {tab==="groups"&&<>
-          <div style={{fontSize:"0.74rem",color:"#8b949e",marginBottom:10,padding:"8px 10px",
-            background:"#161b22",borderRadius:8,border:"1px solid #21262d",lineHeight:1.7}}>
-            <span style={{color:"#2ea043",fontWeight:700}}>1〜2位</span>：ラウンド32へ直接進出　
-            <span style={{color:"#f0883e",fontWeight:700}}>3位</span>：上位<span style={{color:"#e6af00",fontWeight:700}}>8チーム</span>のみ進出<br/>
-            <span style={{fontSize:"0.62rem"}}>3位ランク：①勝点 ②得失点差 ③総得点 ④フェアプレー ⑤FIFAランク</span>
-          </div>
-          {Object.keys(GROUPS).map(g=>(
-            <GroupTable key={g} groupKey={g} stats={groupStats[g]}/>
-          ))}
-        </>}
-
-        {/* ===== 決勝Tタブ ===== */}
-        {tab==="bracket"&&<>
-          <div style={{fontSize:"0.72rem",color:"#8b949e",marginBottom:10,padding:"8px 10px",
-            background:"#161b22",borderRadius:8,border:"1px solid #21262d",lineHeight:1.7}}>
-            3位チームの対戦相手は<span style={{color:"#e6af00",fontWeight:700}}>495通り（FIFA Annex C）</span>で事前規定。<br/>
-            GL全日程終了後に自動確定します。🃏マークのスロットは3位チームが入る枠です。
-          </div>
-          {[["ラウンド32",R32_SLOTS],["ラウンド16",R16_SLOTS],["準々決勝",QF_SLOTS],
-            ["準決勝",SF_SLOTS],["最終",FIN_SLOTS]].map(([label,slots])=>(
-            <div key={label} style={{marginBottom:14}}>
-              <div style={{fontSize:"0.74rem",fontWeight:700,color:"#8b949e",
-                padding:"4px 0",borderBottom:"1px solid #21262d",marginBottom:5}}>
-                {label}
-              </div>
-              {slots.map((s,i)=><BracketRow key={i} s={s} now={now}/>)}
-            </div>
-          ))}
-          <div style={{background:"#161b22",border:"1px solid #30363d",borderRadius:8,padding:12,marginTop:4}}>
-            <div style={{fontWeight:700,fontSize:"0.78rem",color:"#e6af00",marginBottom:5}}>🔀 FIFA Annex C とは</div>
-            <div style={{fontSize:"0.7rem",color:"#8b949e",lineHeight:1.7}}>
-              12組の3位から8チーム選ぶ組み合わせは<span style={{color:"#e6edf3",fontWeight:700}}>495通り</span>。<br/>
-              全パターンに対しスロット割り当てが事前規定されているため、GL終了後に追加抽選なしで即座にブラケットが確定します。
-            </div>
-          </div>
-        </>}
-      </div>
-
-      <style>{`
-        *{box-sizing:border-box}
-        input[type=number]::-webkit-inner-spin-button,
-        input[type=number]::-webkit-outer-spin-button{-webkit-appearance:none;margin:0}
-        input[type=number]{-moz-appearance:textfield}
-        ::-webkit-scrollbar{width:4px}
-        ::-webkit-scrollbar-track{background:#0d1117}
-        ::-webkit-scrollbar-thumb{background:#30363d;border-radius:4px}
-      `}</style>
-    </div>
-  );
-}
+    <div style={{backgrou

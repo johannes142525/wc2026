@@ -36,11 +36,9 @@ const TEAM_EN = {
   "🏴󠁧󠁢󠁥󠁮󠁧󠁿 イングランド":"england","🇭🇷 クロアチア":"croatia","🇵🇦 パナマ":"panama","🇬🇭 ガーナ":"ghana",
 };
 
-// FIFA match centre URL（試合番号の連番仮説に基づく。開幕戦=400021443）
-// 形式: /match/{大会ID}/{シーズンID}/{ステージID}/{試合ID}
-function fifaUrl(matchNo) {
-  return `https://www.fifa.com/en/match-centre/match/17/285023/289273/${400021442 + matchNo}`;
-}
+// FIFA match centre URL は FIFA公式API から実IDを取得して構築する
+// （IDは連番ではないため、起動時に api.fifa.com から全試合マップを取得）
+const FIFA_API = "https://api.fifa.com/api/v3/calendar/matches?idCompetition=17&idSeason=285023&count=500&language=en";
 
 function makeInitialStats(teams) {
   return teams.map(name => ({ name, w:0, d:0, l:0, gf:0, ga:0 }));
@@ -335,8 +333,8 @@ function MatchRow({m, now, scores, spoiler}) {
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:3}}>
         <div style={{display:"flex",alignItems:"center",gap:6}}>
           <span style={{fontSize:"0.66rem",color:"#8b949e"}}>{m.groupLabel||m.group}</span>
-          {m.matchNo&&(
-            <a href={fifaUrl(m.matchNo)} target="_blank" rel="noopener noreferrer"
+          {m.fifaLink&&(
+            <a href={m.fifaLink} target="_blank" rel="noopener noreferrer"
               style={{fontSize:"0.62rem",color:"#58a6ff",textDecoration:"none",
                 border:"1px solid #1f6feb44",borderRadius:3,padding:"0 4px"}}>
               FIFA ↗
@@ -410,6 +408,40 @@ export default function App() {
   const [scores, setScores] = useState({});
   const [apiStatus, setApiStatus] = useState("idle"); // idle | loading | ok | error
   const [lastFetch, setLastFetch] = useState(null);
+  // FIFA試合ページURLマップ: {内部試合キー: URL}
+  const [fifaLinks, setFifaLinks] = useState({});
+
+  // FIFA公式APIから全試合のID・ステージIDを取得してリンクマップを構築
+  useEffect(()=>{
+    (async ()=>{
+      try {
+        const res = await fetch(FIFA_API, {signal: AbortSignal.timeout(10000)});
+        if (!res.ok) throw new Error("HTTP "+res.status);
+        const data = await res.json();
+        const results = data.Results || [];
+        const linkMap = {};
+        results.forEach(fm=>{
+          const url = `https://www.fifa.com/en/match-centre/match/${fm.IdCompetition}/${fm.IdSeason}/${fm.IdStage}/${fm.IdMatch}`;
+          const fh = String(fm.Home?.TeamName?.[0]?.Description || fm.PlaceHolderA || "").toLowerCase();
+          const fa = String(fm.Away?.TeamName?.[0]?.Description || fm.PlaceHolderB || "").toLowerCase();
+          // 第一候補: チーム英語名の両方一致（グループステージ）
+          let found = GROUP_MATCHES.find(m=>{
+            const he = TEAM_EN[m.home], ae = TEAM_EN[m.away];
+            return he && ae && fh.includes(he) && fa.includes(ae);
+          });
+          if (found) { linkMap[found.id] = url; return; }
+          // 第二候補: キックオフ日時の一致（決勝Tなど未確定カード用）
+          if (fm.Date) {
+            const fmKo = new Date(fm.Date).getTime();
+            const allSlots = [...R32_SLOTS,...R16_SLOTS,...QF_SLOTS,...SF_SLOTS,...FIN_SLOTS];
+            const slot = allSlots.find(s=>koDate(s.date,s.time).getTime()===fmKo);
+            if (slot) linkMap["m"+slot.match] = url;
+          }
+        });
+        setFifaLinks(linkMap);
+      } catch(e) { /* FIFA APIが取れなくてもアプリ本体は動作させる */ }
+    })();
+  },[]);
 
   // API取得関数（worldcup26.ir の無料API）
   const fetchScores = useCallback(async ()=>{
@@ -525,9 +557,9 @@ export default function App() {
 
   // 全試合リスト統合
   const allMatches = useMemo(()=>{
-    const gm = GROUP_MATCHES.map(m=>({...m, phase:"group", matchNo: parseInt(m.id.slice(1),10)}));
+    const gm = GROUP_MATCHES.map(m=>({...m, phase:"group", matchNo: parseInt(m.id.slice(1),10), fifaLink: fifaLinks[m.id]}));
     const r32 = R32_SLOTS.map(s=>({
-      date:s.date,time:s.time,phase:"r32",tv:s.tv,matchNo:s.match,
+      date:s.date,time:s.time,phase:"r32",tv:s.tv,matchNo:s.match,fifaLink:fifaLinks["m"+s.match],
       home:resolveSlot(s.home),
       away:s.away.startsWith("3rd_")
         ?`3位通過枠(${s.away.replace("3rd_","").split("").join("・")}組)`
@@ -535,16 +567,16 @@ export default function App() {
       groupLabel:`R32 M${s.match}`,
       thirdNote:s.away.startsWith("3rd_")?s.away.replace("3rd_","").split("").join("・")+"組":null,
     }));
-    const r16 = R16_SLOTS.map(s=>({date:s.date,time:s.time,phase:"r16",tv:s.tv,matchNo:s.match,
+    const r16 = R16_SLOTS.map(s=>({date:s.date,time:s.time,phase:"r16",tv:s.tv,matchNo:s.match,fifaLink:fifaLinks["m"+s.match],
       home:s.home,away:s.away,groupLabel:`R16 M${s.match}`}));
-    const qf  = QF_SLOTS.map(s=>({date:s.date,time:s.time,phase:"qf",tv:s.tv,matchNo:s.match,
+    const qf  = QF_SLOTS.map(s=>({date:s.date,time:s.time,phase:"qf",tv:s.tv,matchNo:s.match,fifaLink:fifaLinks["m"+s.match],
       home:"TBD",away:"TBD",groupLabel:`準々決勝 M${s.match}`}));
-    const sf  = SF_SLOTS.map(s=>({date:s.date,time:s.time,phase:"sf",tv:s.tv,matchNo:s.match,
+    const sf  = SF_SLOTS.map(s=>({date:s.date,time:s.time,phase:"sf",tv:s.tv,matchNo:s.match,fifaLink:fifaLinks["m"+s.match],
       home:"TBD",away:"TBD",groupLabel:`準決勝 M${s.match}`}));
-    const fin = FIN_SLOTS.map(s=>({date:s.date,time:s.time,phase:"final",tv:s.tv,matchNo:s.match,
+    const fin = FIN_SLOTS.map(s=>({date:s.date,time:s.time,phase:"final",tv:s.tv,matchNo:s.match,fifaLink:fifaLinks["m"+s.match],
       home:"TBD",away:"TBD",groupLabel:s.label}));
     return [...gm,...r32,...r16,...qf,...sf,...fin];
-  },[]);
+  },[fifaLinks]);
 
   const within24h = useMemo(()=>{
     const lim = new Date(now.getTime()+24*60*60*1000);

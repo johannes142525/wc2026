@@ -418,27 +418,46 @@ export default function App() {
       const res = await fetch("https://worldcup26.ir/get/games", {signal: AbortSignal.timeout(8000)});
       if (!res.ok) throw new Error("HTTP "+res.status);
       const data = await res.json();
-      const games = Array.isArray(data) ? data : (data.games || data.matches || data.data || []);
+      // 実レスポンス構造: { games: [ { id:"1", home_score:"2", away_score:"0",
+      //   finished:"TRUE", home_team_name_en:"Mexico", away_team_name_en:"South Africa", ... } ] }
+      const games = data.games || [];
       const map = {};
       games.forEach(g=>{
-        // APIフィールド名のゆらぎを吸収
-        const gh = String(g.home_team?.name ?? g.home_team ?? g.homeTeam ?? g.home ?? "").toLowerCase();
-        const ga = String(g.away_team?.name ?? g.away_team ?? g.awayTeam ?? g.away ?? "").toLowerCase();
-        if (!gh || !ga) return;
-        // 英語名キーワードで home と away の両方が一致する試合を探す
-        const matchFound = GROUP_MATCHES.find(m=>{
-          const he = TEAM_EN[m.home], ae = TEAM_EN[m.away];
-          return he && ae && gh.includes(he) && ga.includes(ae);
-        });
-        if (matchFound) {
-          const hs = g.home_score ?? g.homeScore ?? g.score?.home ?? g.score?.fullTime?.home;
-          const as_ = g.away_score ?? g.awayScore ?? g.score?.away ?? g.score?.fullTime?.away;
-          const status = String(g.status ?? g.match_status ?? "").toLowerCase();
-          const finishedOrLive = status.includes("finish") || status.includes("live")
-            || status.includes("play") || status === "ft" || status === "";
-          if (hs != null && as_ != null && finishedOrLive) {
-            map[matchFound.id] = {h: Number(hs), a: Number(as_)};
+        // 第一候補: APIのid＝公式試合番号 → こちらのmatchNo(g001=1...)と直接対応
+        let matchFound = null;
+        const apiNo = parseInt(g.id, 10);
+        if (!isNaN(apiNo) && apiNo >= 1 && apiNo <= 72) {
+          const cand = GROUP_MATCHES.find(m => parseInt(m.id.slice(1),10) === apiNo);
+          // チーム名で軽く検証（番号ズレ対策）
+          if (cand) {
+            const he = TEAM_EN[cand.home], ae = TEAM_EN[cand.away];
+            const gh = String(g.home_team_name_en||"").toLowerCase();
+            const ga = String(g.away_team_name_en||"").toLowerCase();
+            // IDが主キーなので名前は片側一致でOK（"United States"等の表記ゆれ対策）
+            if ((he && gh.includes(he)) || (ae && ga.includes(ae))) {
+              matchFound = cand;
+            }
           }
+        }
+        // 第二候補: チーム名のみで照合（番号検証に失敗した場合の保険）
+        if (!matchFound) {
+          const gh = String(g.home_team_name_en||"").toLowerCase();
+          const ga = String(g.away_team_name_en||"").toLowerCase();
+          if (gh && ga) {
+            matchFound = GROUP_MATCHES.find(m=>{
+              const he = TEAM_EN[m.home], ae = TEAM_EN[m.away];
+              return he && ae && gh.includes(he) && ga.includes(ae);
+            });
+          }
+        }
+        if (!matchFound) return;
+        // スコアは文字列で来る。試合中/終了のみ反映
+        const hs = parseInt(g.home_score, 10);
+        const as_ = parseInt(g.away_score, 10);
+        const started = String(g.finished).toUpperCase()==="TRUE"
+          || (g.time_elapsed && g.time_elapsed!=="notstarted" && g.time_elapsed!=="null");
+        if (!isNaN(hs) && !isNaN(as_) && started) {
+          map[matchFound.id] = {h: hs, a: as_};
         }
       });
       setScores(prev=>({...prev,...map}));

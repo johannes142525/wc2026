@@ -40,6 +40,11 @@ const TEAM_EN = {
 // （IDは連番ではないため、起動時に api.fifa.com から全試合マップを取得）
 const FIFA_API = "https://api.fifa.com/api/v3/calendar/matches?idCompetition=17&idSeason=285023&count=500&language=en";
 
+// アクセント記号を除去して小文字化（Türkiye→turkiye, Curaçao→curacao, Côte d'Ivoire→cote d'ivoire）
+function normName(s) {
+  return String(s||"").normalize("NFD").replace(/[\u0300-\u036f]/g,"").toLowerCase();
+}
+
 function makeInitialStats(teams) {
   return teams.map(name => ({ name, w:0, d:0, l:0, gf:0, ga:0 }));
 }
@@ -270,6 +275,72 @@ function GroupTable({groupKey, stats}) {
   );
 }
 
+// ─── 3位チーム比較順位表 ─────────────────────────────────────────
+function ThirdPlaceTable({groupStats}) {
+  // 各組の3位を抽出（組内順位は勝点→得失点差→総得点）
+  const thirds = Object.entries(groupStats).map(([g, stats])=>{
+    const sorted = stats.map(s=>({
+      ...s, pts: s.w*3+s.d, gd: s.gf-s.ga, played: s.w+s.d+s.l
+    })).sort((a,b)=>b.pts-a.pts||b.gd-a.gd||b.gf-a.gf);
+    return { group: g, ...sorted[2] };
+  }).sort((a,b)=>b.pts-a.pts||b.gd-a.gd||b.gf-a.gf);
+
+  return (
+    <div style={{background:"#161b22",border:"1px solid #e6af0044",borderRadius:8,
+      marginTop:16,overflow:"hidden"}}>
+      <div style={{background:"#1f1a00",padding:"6px 10px",fontSize:"0.78rem",
+        fontWeight:800,color:"#e6af00",letterSpacing:"0.05em"}}>
+        🃏 3位チーム比較（上位8チームが決勝T進出）
+      </div>
+      <div style={{display:"grid",gridTemplateColumns:"14px 22px 1fr 30px 22px 28px 28px",
+        gap:"0 3px",padding:"3px 10px 2px",alignItems:"center"}}>
+        {["","組","","勝点","試","差","得"].map((h,i)=>(
+          <span key={i} style={{fontSize:"0.62rem",color:"#8b949e",
+            textAlign:i===1?"center":"right"}}>{h}</span>
+        ))}
+      </div>
+      {thirds.map((t,i)=>{
+        const rank = i+1;
+        const advance = rank <= 8;
+        const isJapan = t.name.includes("日本");
+        const gdStr = t.gd>0?`+${t.gd}`:`${t.gd}`;
+        return (
+          <div key={t.group} style={{display:"grid",
+            gridTemplateColumns:"14px 22px 1fr 30px 22px 28px 28px",
+            gap:"0 3px",padding:"5px 10px",alignItems:"center",
+            borderTop: rank===9 ? "2px solid #f8514966" : "1px solid #21262d",
+            background: isJapan ? "rgba(31,111,235,0.08)"
+              : advance ? "rgba(46,160,67,0.05)" : "rgba(248,81,73,0.04)"}}>
+            <span style={{fontSize:"0.68rem",fontWeight:800,textAlign:"center",
+              color:advance?"#2ea043":"#f85149"}}>{rank}</span>
+            <span style={{fontSize:"0.7rem",fontWeight:700,color:"#8b949e",
+              textAlign:"center"}}>{t.group}</span>
+            <span style={{fontSize:"0.8rem",fontWeight:isJapan?700:400,
+              color:isJapan?"#79c0ff":advance?"#e6edf3":"#8b949e",
+              overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
+              {t.name}
+              {!advance&&<span style={{fontSize:"0.6rem",color:"#f85149",marginLeft:4}}>敗退圏</span>}
+            </span>
+            <span style={{fontFamily:"monospace",fontSize:"0.88rem",fontWeight:800,
+              textAlign:"right",color:advance?"#2ea043":"#f85149"}}>{t.pts}</span>
+            <span style={{fontFamily:"monospace",fontSize:"0.76rem",color:"#8b949e",
+              textAlign:"right"}}>{t.played}</span>
+            <span style={{fontFamily:"monospace",fontSize:"0.76rem",fontWeight:700,textAlign:"right",
+              color:t.gd>0?"#2ea043":t.gd<0?"#f85149":"#8b949e"}}>{gdStr}</span>
+            <span style={{fontFamily:"monospace",fontSize:"0.76rem",color:"#8b949e",
+              textAlign:"right"}}>{t.gf}</span>
+          </div>
+        );
+      })}
+      <div style={{padding:"4px 10px 6px",fontSize:"0.62rem",color:"#8b949e",lineHeight:1.5}}>
+        順位基準：①勝点 ②得失点差 ③総得点（④フェアプレー ⑤FIFAランクは手元データなし）<br/>
+        <span style={{color:"#2ea043"}}>■ 1〜8位：決勝T進出</span>　
+        <span style={{color:"#f85149"}}>■ 9〜12位：敗退</span>
+      </div>
+    </div>
+  );
+}
+
 // ─── 試合カード（スコア自動取得・ネタバレ防止対応） ──────────────
 function MatchRow({m, now, scores, spoiler}) {
   const ko  = koDate(m.date, m.time);
@@ -422,8 +493,8 @@ export default function App() {
         const linkMap = {};
         results.forEach(fm=>{
           const url = `https://www.fifa.com/en/match-centre/match/${fm.IdCompetition}/${fm.IdSeason}/${fm.IdStage}/${fm.IdMatch}`;
-          const fh = String(fm.Home?.TeamName?.[0]?.Description || fm.PlaceHolderA || "").toLowerCase();
-          const fa = String(fm.Away?.TeamName?.[0]?.Description || fm.PlaceHolderB || "").toLowerCase();
+          const fh = normName(fm.Home?.TeamName?.[0]?.Description || fm.PlaceHolderA);
+          const fa = normName(fm.Away?.TeamName?.[0]?.Description || fm.PlaceHolderB);
           // 第一候補: チーム英語名の両方一致（グループステージ）
           let found = GROUP_MATCHES.find(m=>{
             const he = TEAM_EN[m.home], ae = TEAM_EN[m.away];
@@ -463,8 +534,8 @@ export default function App() {
           // チーム名で軽く検証（番号ズレ対策）
           if (cand) {
             const he = TEAM_EN[cand.home], ae = TEAM_EN[cand.away];
-            const gh = String(g.home_team_name_en||"").toLowerCase();
-            const ga = String(g.away_team_name_en||"").toLowerCase();
+            const gh = normName(g.home_team_name_en);
+            const ga = normName(g.away_team_name_en);
             // IDが主キーなので名前は片側一致でOK（"United States"等の表記ゆれ対策）
             if ((he && gh.includes(he)) || (ae && ga.includes(ae))) {
               matchFound = cand;
@@ -473,8 +544,8 @@ export default function App() {
         }
         // 第二候補: チーム名のみで照合（番号検証に失敗した場合の保険）
         if (!matchFound) {
-          const gh = String(g.home_team_name_en||"").toLowerCase();
-          const ga = String(g.away_team_name_en||"").toLowerCase();
+          const gh = normName(g.home_team_name_en);
+          const ga = normName(g.away_team_name_en);
           if (gh && ga) {
             matchFound = GROUP_MATCHES.find(m=>{
               const he = TEAM_EN[m.home], ae = TEAM_EN[m.away];
@@ -768,6 +839,7 @@ export default function App() {
           {Object.keys(GROUPS).map(g=>(
             <GroupTable key={g} groupKey={g} stats={groupStats[g]}/>
           ))}
+          <ThirdPlaceTable groupStats={groupStats}/>
         </>}
 
         {/* ===== 決勝Tタブ ===== */}

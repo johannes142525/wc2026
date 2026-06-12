@@ -173,21 +173,14 @@ const GROUP_MATCHES = [
 const TV_COLOR = {"NHK":"#4a7c59","日本テレビ":"#c0392b","フジテレビ":"#2980b9","NHK BS":"#6b4c9a"};
 const DAY = ["日","月","火","水","木","金","土"];
 
+// 深夜の試合も翌日の実時刻表記（26:00ではなく翌日2:00）で扱う
 function jstDisp(date, time) {
-  const h = parseInt(time);
-  return h < 3 ? `${24+h}:${time.slice(3)}` : time;
+  return time;
 }
 function koDate(date, time) {
-  const h = parseInt(time);
-  if (h < 3) {
-    const d = new Date(date); d.setDate(d.getDate()-1);
-    return new Date(`${d.toISOString().slice(0,10)}T${time}:00+09:00`);
-  }
   return new Date(`${date}T${time}:00+09:00`);
 }
 function dispDate(date, time) {
-  const h = parseInt(time);
-  if (h < 3) { const d=new Date(date); d.setDate(d.getDate()-1); return d.toISOString().slice(0,10); }
   return date;
 }
 function fmtDate(s) {
@@ -475,8 +468,14 @@ export default function App() {
   const [copied, setCopied] = useState(false);
   const [spoiler, setSpoiler] = useState(false); // ネタバレ防止
 
-  // スコア state: { [matchId]: {h, a} }  APIから自動取得
-  const [scores, setScores] = useState({});
+  // スコア state: { [matchId]: {h, a, final} }  APIから自動取得
+  // 確定済みスコアはlocalStorageに永続化（再読み込み時に即復元）
+  const [scores, setScores] = useState(()=>{
+    try {
+      const saved = localStorage.getItem("wc2026_scores");
+      return saved ? JSON.parse(saved) : {};
+    } catch { return {}; } // Claudeプレビュー等localStorage不可の環境でも動作
+  });
   const [apiStatus, setApiStatus] = useState("idle"); // idle | loading | ok | error
   const [lastFetch, setLastFetch] = useState(null);
   // FIFA試合ページURLマップ: {内部試合キー: URL}
@@ -560,10 +559,26 @@ export default function App() {
         const started = String(g.finished).toUpperCase()==="TRUE"
           || (g.time_elapsed && g.time_elapsed!=="notstarted" && g.time_elapsed!=="null");
         if (!isNaN(hs) && !isNaN(as_) && started) {
-          map[matchFound.id] = {h: hs, a: as_};
+          const isFinal = String(g.finished).toUpperCase()==="TRUE";
+          map[matchFound.id] = {h: hs, a: as_, final: isFinal};
         }
       });
-      setScores(prev=>({...prev,...map}));
+      // 終了確定(final)済みの試合はロックして上書きしない
+      setScores(prev=>{
+        const next = {...prev};
+        Object.entries(map).forEach(([id, sc])=>{
+          if (next[id]?.final) return; // 確定済みは固定
+          next[id] = sc;
+        });
+        // 確定済みスコアだけ永続化
+        try {
+          const finals = Object.fromEntries(
+            Object.entries(next).filter(([,sc])=>sc.final)
+          );
+          localStorage.setItem("wc2026_scores", JSON.stringify(finals));
+        } catch {} // localStorage不可環境では何もしない
+        return next;
+      });
       setApiStatus("ok");
       setLastFetch(new Date());
     } catch(e) {
@@ -675,10 +690,10 @@ export default function App() {
     const lines=within24h.map(m=>{
       const t=jstDisp(m.date,m.time);
       const d=fmtDate(dispDate(m.date,m.time));
-      const tv=m.tv&&m.tv.length>0?` 📺${m.tv.join("/")}`:" 📡DAZN";
+      const tv=m.tv&&m.tv.length>0?` 📺${m.tv.join("/")}・配信DAZN`:" 📡DAZN";
       return `${d} ${t} ${m.home} vs ${m.away}（${m.groupLabel||m.group}）${tv}`;
     });
-    return `⚽ #W杯2026 直近の試合\n\n${lines.join("\n")}\n\n#FIFAWorldCup`;
+    return `⚽ #W杯2026 明日の試合\n\n${lines.join("\n")}\n\n#FIFAWorldCup`;
   },[within24h]);
 
   const today = todayJST();

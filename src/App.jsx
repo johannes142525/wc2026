@@ -16,9 +16,31 @@ const GROUPS = {
   L: ["🏴󠁧󠁢󠁥󠁮󠁧󠁿 イングランド","🇭🇷 クロアチア","🇵🇦 パナマ","🇬🇭 ガーナ"],
 };
 
-// チーム→組のマップ（スコア入力時に順位表を更新するため）
+// チーム→組のマップ（スコア反映時に順位表を更新するため）
 const TEAM_GROUP = {};
 Object.entries(GROUPS).forEach(([g, teams]) => teams.forEach(t => { TEAM_GROUP[t] = g; }));
+
+// 日本語名 → 英語名（API照合用）
+const TEAM_EN = {
+  "🇲🇽 メキシコ":"mexico","🇰🇷 韓国":"korea","🇿🇦 南アフリカ":"south africa","🇨🇿 チェコ":"czech",
+  "🇨🇦 カナダ":"canada","🇧🇦 ボスニア":"bosnia","🇶🇦 カタール":"qatar","🇨🇭 スイス":"switzerland",
+  "🇧🇷 ブラジル":"brazil","🇲🇦 モロッコ":"morocco","🏴󠁧󠁢󠁳󠁣󠁴󠁿 スコットランド":"scotland","🇭🇹 ハイチ":"haiti",
+  "🇺🇸 アメリカ":"usa","🇵🇾 パラグアイ":"paraguay","🇦🇺 オーストラリア":"australia","🇹🇷 トルコ":"turk",
+  "🇩🇪 ドイツ":"germany","🇨🇼 キュラソー":"curacao","🇨🇮 コートジボワール":"ivoire","🇪🇨 エクアドル":"ecuador",
+  "🇳🇱 オランダ":"netherlands","🇯🇵 日本":"japan","🇸🇪 スウェーデン":"sweden","🇹🇳 チュニジア":"tunisia",
+  "🇧🇪 ベルギー":"belgium","🇮🇷 イラン":"iran","🇪🇬 エジプト":"egypt","🇳🇿 ニュージーランド":"zealand",
+  "🇪🇸 スペイン":"spain","🇺🇾 ウルグアイ":"uruguay","🇸🇦 サウジアラビア":"saudi","🇨🇻 カーボベルデ":"verde",
+  "🇫🇷 フランス":"france","🇸🇳 セネガル":"senegal","🇳🇴 ノルウェー":"norway","🇮🇶 イラク":"iraq",
+  "🇦🇷 アルゼンチン":"argentina","🇦🇹 オーストリア":"austria","🇩🇿 アルジェリア":"algeria","🇯🇴 ヨルダン":"jordan",
+  "🇵🇹 ポルトガル":"portugal","🇨🇴 コロンビア":"colombia","🇺🇿 ウズベキスタン":"uzbekistan","🇨🇩 DRコンゴ":"congo",
+  "🏴󠁧󠁢󠁥󠁮󠁧󠁿 イングランド":"england","🇭🇷 クロアチア":"croatia","🇵🇦 パナマ":"panama","🇬🇭 ガーナ":"ghana",
+};
+
+// FIFA match centre URL（試合番号の連番仮説に基づく。開幕戦=400021443）
+// 形式: /match/{大会ID}/{シーズンID}/{ステージID}/{試合ID}
+function fifaUrl(matchNo) {
+  return `https://www.fifa.com/en/match-centre/match/17/285023/289273/${400021442 + matchNo}`;
+}
 
 function makeInitialStats(teams) {
   return teams.map(name => ({ name, w:0, d:0, l:0, gf:0, ga:0 }));
@@ -309,9 +331,18 @@ function MatchRow({m, now, scores, spoiler}) {
         </span>
       </div>
 
-      {/* 2行目：組・放送 */}
+      {/* 2行目：組・FIFAリンク・放送 */}
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:3}}>
-        <span style={{fontSize:"0.66rem",color:"#8b949e"}}>{m.groupLabel||m.group}</span>
+        <div style={{display:"flex",alignItems:"center",gap:6}}>
+          <span style={{fontSize:"0.66rem",color:"#8b949e"}}>{m.groupLabel||m.group}</span>
+          {m.matchNo&&(
+            <a href={fifaUrl(m.matchNo)} target="_blank" rel="noopener noreferrer"
+              style={{fontSize:"0.62rem",color:"#58a6ff",textDecoration:"none",
+                border:"1px solid #1f6feb44",borderRadius:3,padding:"0 4px"}}>
+              FIFA ↗
+            </a>
+          )}
+        </div>
         <div style={{display:"flex",gap:2}}>
           {m.tv&&m.tv.length>0?m.tv.map(t=><TVBadge key={t} s={t}/>)
             :<span style={{fontSize:"0.62rem",color:"#8b949e"}}>DAZN</span>}
@@ -387,22 +418,26 @@ export default function App() {
       const res = await fetch("https://worldcup26.ir/get/games", {signal: AbortSignal.timeout(8000)});
       if (!res.ok) throw new Error("HTTP "+res.status);
       const data = await res.json();
-      // data は試合配列。home_score/away_score と status を見る
+      const games = Array.isArray(data) ? data : (data.games || data.matches || data.data || []);
       const map = {};
-      (Array.isArray(data) ? data : data.games || data.matches || []).forEach(g=>{
-        // APIのチーム名と内部IDを突き合わせるため、home/awayチーム名で一致を探す
+      games.forEach(g=>{
+        // APIフィールド名のゆらぎを吸収
+        const gh = String(g.home_team?.name ?? g.home_team ?? g.homeTeam ?? g.home ?? "").toLowerCase();
+        const ga = String(g.away_team?.name ?? g.away_team ?? g.awayTeam ?? g.away ?? "").toLowerCase();
+        if (!gh || !ga) return;
+        // 英語名キーワードで home と away の両方が一致する試合を探す
         const matchFound = GROUP_MATCHES.find(m=>{
-          const hn = m.home.replace(/^.+? /,""); // 絵文字除去
-          const an = m.away.replace(/^.+? /,"");
-          const gh = (g.home_team||g.home||"").toLowerCase();
-          const ga = (g.away_team||g.away||"").toLowerCase();
-          return gh.includes(hn.toLowerCase()) || hn.toLowerCase().includes(gh);
+          const he = TEAM_EN[m.home], ae = TEAM_EN[m.away];
+          return he && ae && gh.includes(he) && ga.includes(ae);
         });
         if (matchFound) {
-          const hs = g.home_score ?? g.score?.home;
-          const as_ = g.away_score ?? g.score?.away;
-          if (hs != null && as_ != null) {
-            map[matchFound.id] = {h: hs, a: as_};
+          const hs = g.home_score ?? g.homeScore ?? g.score?.home ?? g.score?.fullTime?.home;
+          const as_ = g.away_score ?? g.awayScore ?? g.score?.away ?? g.score?.fullTime?.away;
+          const status = String(g.status ?? g.match_status ?? "").toLowerCase();
+          const finishedOrLive = status.includes("finish") || status.includes("live")
+            || status.includes("play") || status === "ft" || status === "";
+          if (hs != null && as_ != null && finishedOrLive) {
+            map[matchFound.id] = {h: Number(hs), a: Number(as_)};
           }
         }
       });
@@ -471,9 +506,9 @@ export default function App() {
 
   // 全試合リスト統合
   const allMatches = useMemo(()=>{
-    const gm = GROUP_MATCHES.map(m=>({...m, phase:"group"}));
+    const gm = GROUP_MATCHES.map(m=>({...m, phase:"group", matchNo: parseInt(m.id.slice(1),10)}));
     const r32 = R32_SLOTS.map(s=>({
-      date:s.date,time:s.time,phase:"r32",tv:s.tv,
+      date:s.date,time:s.time,phase:"r32",tv:s.tv,matchNo:s.match,
       home:resolveSlot(s.home),
       away:s.away.startsWith("3rd_")
         ?`3位通過枠(${s.away.replace("3rd_","").split("").join("・")}組)`
@@ -481,13 +516,13 @@ export default function App() {
       groupLabel:`R32 M${s.match}`,
       thirdNote:s.away.startsWith("3rd_")?s.away.replace("3rd_","").split("").join("・")+"組":null,
     }));
-    const r16 = R16_SLOTS.map(s=>({date:s.date,time:s.time,phase:"r16",tv:s.tv,
+    const r16 = R16_SLOTS.map(s=>({date:s.date,time:s.time,phase:"r16",tv:s.tv,matchNo:s.match,
       home:s.home,away:s.away,groupLabel:`R16 M${s.match}`}));
-    const qf  = QF_SLOTS.map(s=>({date:s.date,time:s.time,phase:"qf",tv:s.tv,
+    const qf  = QF_SLOTS.map(s=>({date:s.date,time:s.time,phase:"qf",tv:s.tv,matchNo:s.match,
       home:"TBD",away:"TBD",groupLabel:`準々決勝 M${s.match}`}));
-    const sf  = SF_SLOTS.map(s=>({date:s.date,time:s.time,phase:"sf",tv:s.tv,
+    const sf  = SF_SLOTS.map(s=>({date:s.date,time:s.time,phase:"sf",tv:s.tv,matchNo:s.match,
       home:"TBD",away:"TBD",groupLabel:`準決勝 M${s.match}`}));
-    const fin = FIN_SLOTS.map(s=>({date:s.date,time:s.time,phase:"final",tv:s.tv,
+    const fin = FIN_SLOTS.map(s=>({date:s.date,time:s.time,phase:"final",tv:s.tv,matchNo:s.match,
       home:"TBD",away:"TBD",groupLabel:s.label}));
     return [...gm,...r32,...r16,...qf,...sf,...fin];
   },[]);

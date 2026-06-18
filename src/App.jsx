@@ -334,17 +334,31 @@ function ThirdPlaceTable({groupStats}) {
   );
 }
 
-// ─── 試合カード（スコア自動取得・ネタバレ防止対応） ──────────────
-function MatchRow({m, now, scores, spoiler}) {
+// ─── 試合カード（自動取得＋手動編集・ネタバレ防止対応） ──────────
+function MatchRow({m, now, scores, spoiler, onManualScore}) {
   const ko  = koDate(m.date, m.time);
   const end = new Date(ko.getTime()+110*60*1000);
   const live = now>=ko && now<=end;
   const past = now>end;
   const sc = scores[m.id];
   const hasScore = sc && sc.h!=null && sc.a!=null;
-  // ネタバレ防止ON＋終了試合 → タップで解除
   const [revealed, setRevealed] = useState(false);
   const hidden = spoiler && past && !live;
+  // 編集モード
+  const [editing, setEditing] = useState(false);
+  const [eh, setEh] = useState(sc?.h ?? "");
+  const [ea, setEa] = useState(sc?.a ?? "");
+  const canEdit = !!m.id; // グループ試合のみ（決勝Tはカード未確定なので対象外）
+
+  const openEdit = ()=>{
+    setEh(sc?.h ?? ""); setEa(sc?.a ?? "");
+    setEditing(true);
+  };
+  const saveEdit = ()=>{
+    if (eh==="" || ea==="") { onManualScore(m.id, null, null); }
+    else { onManualScore(m.id, eh, ea); }
+    setEditing(false);
+  };
 
   return (
     <div style={{background:m.japan?"linear-gradient(135deg,#1a1f2e,#161b22)":"#161b22",
@@ -368,7 +382,17 @@ function MatchRow({m, now, scores, spoiler}) {
 
         {/* スコア表示部 */}
         <div style={{flexShrink:0,minWidth:52,textAlign:"center"}}>
-          {hasScore ? (
+          {editing ? (
+            <div style={{display:"flex",alignItems:"center",gap:2,justifyContent:"center"}}>
+              <input type="number" min="0" max="30" value={eh} onChange={e=>setEh(e.target.value)}
+                style={{width:26,background:"#0d1117",border:"1px solid #1f6feb",borderRadius:3,
+                  color:"#e6edf3",fontSize:"0.85rem",fontWeight:800,textAlign:"center",padding:"1px 0"}}/>
+              <span style={{color:"#8b949e",fontSize:"0.8rem"}}>-</span>
+              <input type="number" min="0" max="30" value={ea} onChange={e=>setEa(e.target.value)}
+                style={{width:26,background:"#0d1117",border:"1px solid #1f6feb",borderRadius:3,
+                  color:"#e6edf3",fontSize:"0.85rem",fontWeight:800,textAlign:"center",padding:"1px 0"}}/>
+            </div>
+          ) : hasScore ? (
             hidden && !revealed ? (
               <button onClick={()=>setRevealed(true)} style={{
                 background:"#21262d",border:"1px solid #30363d",borderRadius:4,
@@ -376,11 +400,17 @@ function MatchRow({m, now, scores, spoiler}) {
                 終了 👁
               </button>
             ) : (
-              <span style={{fontFamily:"monospace",fontSize:"1rem",fontWeight:800,
-                color:live?"#f0883e":"#e6edf3",letterSpacing:1}}>
-                {sc.h} - {sc.a}
+              <span onClick={canEdit?openEdit:undefined} style={{fontFamily:"monospace",
+                fontSize:"1rem",fontWeight:800,letterSpacing:1,cursor:canEdit?"pointer":"default",
+                color:live?"#f0883e":"#e6edf3"}}>
+                {sc.h} - {sc.a}{sc.manual&&<span style={{fontSize:"0.55rem",color:"#6e3a9a",marginLeft:2}}>✎</span>}
               </span>
             )
+          ) : canEdit && past ? (
+            <button onClick={openEdit} style={{background:"transparent",border:"1px dashed #30363d",
+              borderRadius:4,color:"#6e7681",fontSize:"0.6rem",padding:"2px 5px",cursor:"pointer"}}>
+              入力
+            </button>
           ) : (
             <span style={{color:"#8b949e",fontSize:"0.8rem"}}>vs</span>
           )}
@@ -392,6 +422,19 @@ function MatchRow({m, now, scores, spoiler}) {
           {m.away}
         </span>
       </div>
+
+      {/* 編集モードの保存/クリアボタン */}
+      {editing && (
+        <div style={{display:"flex",gap:6,justifyContent:"center",marginTop:6}}>
+          <button onClick={saveEdit} style={{background:"#1f6feb",color:"#fff",border:"none",
+            borderRadius:4,fontSize:"0.66rem",padding:"3px 12px",cursor:"pointer",fontWeight:700}}>保存</button>
+          <button onClick={()=>{onManualScore(m.id,null,null);setEditing(false);}} style={{
+            background:"#21262d",color:"#8b949e",border:"1px solid #30363d",
+            borderRadius:4,fontSize:"0.66rem",padding:"3px 10px",cursor:"pointer"}}>自動に戻す</button>
+          <button onClick={()=>setEditing(false)} style={{background:"transparent",color:"#6e7681",
+            border:"none",fontSize:"0.66rem",padding:"3px 6px",cursor:"pointer"}}>×</button>
+        </div>
+      )}
 
       {/* 2行目：組・FIFAリンク・放送 */}
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:3}}>
@@ -481,104 +524,73 @@ export default function App() {
   // FIFA試合ページURLマップ: {内部試合キー: URL}
   const [fifaLinks, setFifaLinks] = useState({});
 
-  // FIFA公式APIから全試合のID・ステージIDを取得してリンクマップを構築
-  useEffect(()=>{
-    (async ()=>{
-      try {
-        const res = await fetch(FIFA_API, {signal: AbortSignal.timeout(10000)});
-        if (!res.ok) throw new Error("HTTP "+res.status);
-        const data = await res.json();
-        const results = data.Results || [];
-        const linkMap = {};
-        results.forEach(fm=>{
-          const url = `https://www.fifa.com/en/match-centre/match/${fm.IdCompetition}/${fm.IdSeason}/${fm.IdStage}/${fm.IdMatch}`;
-          const fh = normName(fm.Home?.TeamName?.[0]?.Description || fm.PlaceHolderA);
-          const fa = normName(fm.Away?.TeamName?.[0]?.Description || fm.PlaceHolderB);
-          // 第一候補: チーム英語名の両方一致（グループステージ）
-          let found = GROUP_MATCHES.find(m=>{
-            const he = TEAM_EN[m.home], ae = TEAM_EN[m.away];
-            return he && ae && fh.includes(he) && fa.includes(ae);
-          });
-          // 第二候補: 名前が片方でも一致すれば採用（表記ゆれ対策）
-          if (!found) {
-            found = GROUP_MATCHES.find(m=>{
-              const he = TEAM_EN[m.home], ae = TEAM_EN[m.away];
-              return he && ae && (fh.includes(he) || fa.includes(ae));
-            });
-          }
-          if (found) { linkMap[found.id] = url; return; }
-          // 第三候補: キックオフ日時の一致（決勝T＋グループの名前不一致救済）
-          if (fm.Date) {
-            const fmKo = new Date(fm.Date).getTime();
-            // グループ試合
-            const gMatch = GROUP_MATCHES.find(m=>koDate(m.date,m.time).getTime()===fmKo
-              && !linkMap[m.id]);
-            if (gMatch) { linkMap[gMatch.id] = url; return; }
-            // 決勝T
-            const allSlots = [...R32_SLOTS,...R16_SLOTS,...QF_SLOTS,...SF_SLOTS,...FIN_SLOTS];
-            const slot = allSlots.find(s=>koDate(s.date,s.time).getTime()===fmKo);
-            if (slot) linkMap["m"+slot.match] = url;
-          }
-        });
-        setFifaLinks(linkMap);
-      } catch(e) { /* FIFA APIが取れなくてもアプリ本体は動作させる */ }
-    })();
-  },[]);
+  // FIFA公式APIから「リンク」と「スコア」を一括取得
+  // FIFAの試合データに紐づく内部キーを返す（group=id / knockout="m"+match）
+  const matchFifaResult = (fm) => {
+    const fh = normName(fm.Home?.TeamName?.[0]?.Description || fm.PlaceHolderA);
+    const fa = normName(fm.Away?.TeamName?.[0]?.Description || fm.PlaceHolderB);
+    // 名前両方一致（グループ）
+    let g = GROUP_MATCHES.find(m=>{
+      const he=TEAM_EN[m.home], ae=TEAM_EN[m.away];
+      return he&&ae&&fh.includes(he)&&fa.includes(ae);
+    });
+    if (g) return {key:g.id, group:g};
+    // 名前片方一致
+    g = GROUP_MATCHES.find(m=>{
+      const he=TEAM_EN[m.home], ae=TEAM_EN[m.away];
+      return he&&ae&&(fh.includes(he)||fa.includes(ae));
+    });
+    if (g) return {key:g.id, group:g};
+    // キックオフ日時一致
+    if (fm.Date) {
+      const ko = new Date(fm.Date).getTime();
+      const gm = GROUP_MATCHES.find(m=>koDate(m.date,m.time).getTime()===ko);
+      if (gm) return {key:gm.id, group:gm};
+      const slot = [...R32_SLOTS,...R16_SLOTS,...QF_SLOTS,...SF_SLOTS,...FIN_SLOTS]
+        .find(s=>koDate(s.date,s.time).getTime()===ko);
+      if (slot) return {key:"m"+slot.match, group:null};
+    }
+    return null;
+  };
 
-  // API取得関数（worldcup26.ir の無料API）
   const fetchScores = useCallback(async ()=>{
     setApiStatus("loading");
     try {
-      const res = await fetch("https://worldcup26.ir/get/games", {signal: AbortSignal.timeout(8000)});
+      const res = await fetch(FIFA_API, {signal: AbortSignal.timeout(10000)});
       if (!res.ok) throw new Error("HTTP "+res.status);
       const data = await res.json();
-      // 実レスポンス構造: { games: [ { id:"1", home_score:"2", away_score:"0",
-      //   finished:"TRUE", home_team_name_en:"Mexico", away_team_name_en:"South Africa", ... } ] }
-      const games = data.games || [];
-      const map = {};
-      games.forEach(g=>{
-        // 第一候補: APIのid＝公式試合番号。idは主キーなので名前検証なしで直接採用
-        let matchFound = null;
-        const apiNo = parseInt(g.id, 10);
-        if (!isNaN(apiNo) && apiNo >= 1 && apiNo <= 72) {
-          matchFound = GROUP_MATCHES.find(m => parseInt(m.id.slice(1),10) === apiNo) || null;
-        }
-        // 第二候補: チーム名で照合（id無効時の保険）
-        if (!matchFound) {
-          const gh = normName(g.home_team_name_en);
-          const ga = normName(g.away_team_name_en);
-          if (gh && ga) {
-            matchFound = GROUP_MATCHES.find(m=>{
-              const he = TEAM_EN[m.home], ae = TEAM_EN[m.away];
-              return he && ae && gh.includes(he) && ga.includes(ae);
-            });
-          }
-        }
-        if (!matchFound) return;
-        // スコアは文字列で来る。試合中/終了のみ反映
-        const hs = parseInt(g.home_score, 10);
-        const as_ = parseInt(g.away_score, 10);
-        const started = String(g.finished).toUpperCase()==="TRUE"
-          || (g.time_elapsed && g.time_elapsed!=="notstarted" && g.time_elapsed!=="null");
-        if (!isNaN(hs) && !isNaN(as_) && started) {
-          const isFinal = String(g.finished).toUpperCase()==="TRUE";
-          map[matchFound.id] = {h: hs, a: as_, final: isFinal};
+      const results = data.Results || [];
+      const linkMap = {};
+      const scoreMap = {};
+      results.forEach(fm=>{
+        const m = matchFifaResult(fm);
+        if (!m) return;
+        // リンク
+        linkMap[m.key] = `https://www.fifa.com/en/match-centre/match/${fm.IdCompetition}/${fm.IdSeason}/${fm.IdStage}/${fm.IdMatch}`;
+        // スコア: Home/AwayTeamScore が数値で入っていれば採用
+        // MatchStatusの整数の意味はエンドポイントで揺れるため日時で判定する
+        const hs = fm.HomeTeamScore, as_ = fm.AwayTeamScore;
+        const ko = fm.Date ? new Date(fm.Date).getTime() : 0;
+        const started = ko && Date.now() >= ko;          // KO時刻を過ぎた試合のみ
+        const isFinal = ko && (Date.now()-ko) > 120*60*1000; // KOから2時間超で確定ロック
+        if (hs!=null && as_!=null && started) {
+          scoreMap[m.key] = {h:Number(hs), a:Number(as_), final:!!isFinal};
         }
       });
-      // 終了確定(final)済みの試合はロックして上書きしない
+      if (Object.keys(linkMap).length) setFifaLinks(linkMap);
+      // 確定済み/手動編集済みは上書きしない
       setScores(prev=>{
         const next = {...prev};
-        Object.entries(map).forEach(([id, sc])=>{
-          if (next[id]?.final) return; // 確定済みは固定
+        Object.entries(scoreMap).forEach(([id,sc])=>{
+          if (next[id]?.final || next[id]?.manual) return; // 確定 or 手動は固定
           next[id] = sc;
         });
-        // 確定済みスコアだけ永続化
         try {
-          const finals = Object.fromEntries(
-            Object.entries(next).filter(([,sc])=>sc.final)
+          const keep = Object.fromEntries(
+            Object.entries(next).filter(([,sc])=>sc.final||sc.manual)
           );
-          localStorage.setItem("wc2026_scores", JSON.stringify(finals));
-        } catch {} // localStorage不可環境では何もしない
+          localStorage.setItem("wc2026_scores", JSON.stringify(keep));
+        } catch {}
         return next;
       });
       setApiStatus("ok");
@@ -586,6 +598,26 @@ export default function App() {
     } catch(e) {
       setApiStatus("error");
     }
+  }, []);
+
+  // 手動でスコアを設定（manualフラグで自動更新から保護）
+  const setManualScore = useCallback((id, h, a)=>{
+    setScores(prev=>{
+      const next = {...prev};
+      if (h===null && a===null) {
+        // クリア → 自動取得に戻す
+        delete next[id];
+      } else {
+        next[id] = {h:Number(h), a:Number(a), final:true, manual:true};
+      }
+      try {
+        const keep = Object.fromEntries(
+          Object.entries(next).filter(([,sc])=>sc.final||sc.manual)
+        );
+        localStorage.setItem("wc2026_scores", JSON.stringify(keep));
+      } catch {}
+      return next;
+    });
   }, []);
 
   // 起動時・30分ごとに自動取得
@@ -808,7 +840,7 @@ export default function App() {
                     fontWeight:800,padding:"1px 5px",borderRadius:3}}>TODAY</span>}
                   {fmtDate(d)}
                 </div>
-                {ms.map((m,i)=><MatchRow key={i} m={m} now={now} scores={scores} spoiler={spoiler}/>)}
+                {ms.map((m,i)=><MatchRow key={i} m={m} now={now} scores={scores} spoiler={spoiler} onManualScore={setManualScore}/>)}
               </div>
             ))}
 
@@ -823,9 +855,9 @@ export default function App() {
             <span>BSP4K 全試合</span>
           </div>
           <div style={{fontSize:"0.62rem",color:"#8b949e",marginTop:4,display:"flex",alignItems:"center",gap:6}}>
-            {apiStatus==="loading"&&<span>⏳ スコア取得中...</span>}
-            {apiStatus==="ok"&&lastFetch&&<span>✅ スコア更新: {lastFetch.toLocaleTimeString("ja-JP",{hour:"2-digit",minute:"2-digit"})}</span>}
-            {apiStatus==="error"&&<span>⚠️ API取得失敗（大会中のみ有効）</span>}
+            {apiStatus==="loading"&&<span>⏳ FIFAから取得中...</span>}
+            {apiStatus==="ok"&&lastFetch&&<span>✅ 更新: {lastFetch.toLocaleTimeString("ja-JP",{hour:"2-digit",minute:"2-digit"})}（自動取得失敗時はスコアをタップで手動入力可）</span>}
+            {apiStatus==="error"&&<span>⚠️ 自動取得失敗。終了試合のスコアをタップで手動入力できます</span>}
           </div>
 
           {/* フローティングXポストボタン（スクロール追従） */}

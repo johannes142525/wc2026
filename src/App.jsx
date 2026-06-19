@@ -49,6 +49,79 @@ function makeInitialStats(teams) {
   return teams.map(name => ({ name, w:0, d:0, l:0, gf:0, ga:0 }));
 }
 
+// ─── 2026ルールのタイブレーク順位付け ─────────────────────────────
+// FIFA World Cup 2026 第13条:
+//  1. 勝ち点（全試合）
+//  2. 当該チーム間（直接対決）の勝ち点
+//  3. 当該チーム間の得失点差
+//  4. 当該チーム間の総得点
+//  5. 全試合の得失点差
+//  6. 全試合の総得点
+//  （以降フェアプレー・FIFAランクは手元データなしのため未実装）
+//
+// statsArr: [{name,w,d,l,gf,ga}], h2hGames: 当該グループの確定試合 [{home,away,hs,as}]
+function rankGroup(statsArr, h2hGames) {
+  // 基本指標を付与
+  const base = statsArr.map(s => ({
+    ...s, pts: s.w*3+s.d, gd: s.gf-s.ga, played: s.w+s.d+s.l
+  }));
+
+  // 当該チーム集合内だけのミニ順位表を計算するヘルパー
+  const miniStats = (names) => {
+    const set = new Set(names);
+    const m = {};
+    names.forEach(n => { m[n] = {pts:0, gd:0, gf:0}; });
+    h2hGames.forEach(g => {
+      if (!set.has(g.home) || !set.has(g.away)) return; // 当該チーム同士の試合のみ
+      const hs=g.hs, as_=g.as;
+      // 勝ち点
+      if (hs>as_) m[g.home].pts+=3;
+      else if (hs<as_) m[g.away].pts+=3;
+      else { m[g.home].pts+=1; m[g.away].pts+=1; }
+      // 得失点・得点
+      m[g.home].gd += hs-as_; m[g.away].gd += as_-hs;
+      m[g.home].gf += hs;     m[g.away].gf += as_;
+    });
+    return m;
+  };
+
+  // 比較関数（同点グループ内で再帰的に直接対決を見る）
+  const cmp = (a, b) => {
+    // 1. 全体勝ち点
+    if (b.pts !== a.pts) return b.pts - a.pts;
+    // 2〜4. 同勝ち点で並ぶチーム集合を特定し、その中での直接対決を見る
+    const tiedNames = base.filter(t => t.pts === a.pts).map(t => t.name);
+    if (tiedNames.length >= 2) {
+      const mini = miniStats(tiedNames);
+      const ma = mini[a.name], mb = mini[b.name];
+      if (ma && mb) {
+        if (mb.pts !== ma.pts) return mb.pts - ma.pts; // 直接対決の勝ち点
+        if (mb.gd  !== ma.gd ) return mb.gd  - ma.gd;  // 直接対決の得失点差
+        if (mb.gf  !== ma.gf ) return mb.gf  - ma.gf;  // 直接対決の総得点
+      }
+    }
+    // 5. 全体得失点差
+    if (b.gd !== a.gd) return b.gd - a.gd;
+    // 6. 全体総得点
+    if (b.gf !== a.gf) return b.gf - a.gf;
+    return 0;
+  };
+
+  return [...base].sort(cmp);
+}
+
+// scores と GROUP_MATCHES から、指定グループの確定済み直接対決リストを作る
+function groupH2H(groupKey, scores, groupMatches, teamGroup) {
+  const out = [];
+  groupMatches.forEach(m => {
+    if (teamGroup[m.home] !== groupKey) return;
+    const sc = scores[m.id];
+    if (!sc || sc.h==null || sc.a==null) return;
+    out.push({home:m.home, away:m.away, hs:Number(sc.h), as:Number(sc.a)});
+  });
+  return out;
+}
+
 // ─── 決勝T構造 ───────────────────────────────────────────────────
 const R32_SLOTS = [
   { match:73, home:"A2", away:"B2",        date:"2026-06-29", time:"04:00", tv:[] },
@@ -208,13 +281,8 @@ function TVBadge({s}) {
 
 
 // ─── 順位表コンポーネント ─────────────────────────────────────────
-function GroupTable({groupKey, stats}) {
-  const rows = GROUPS[groupKey].map((name,i) => {
-    const s = stats[i];
-    const pts = s.w*3 + s.d;
-    const gd  = s.gf - s.ga;
-    return { name, ...s, pts, gd, played: s.w+s.d+s.l };
-  }).sort((a,b) => b.pts-a.pts || b.gd-a.gd || b.gf-a.gf);
+function GroupTable({groupKey, stats, h2h, clinch}) {
+  const rows = rankGroup(stats, h2h||[]);
 
   return (
     <div style={{background:"#161b22",border:"1px solid #21262d",borderRadius:8,
@@ -241,10 +309,15 @@ function GroupTable({groupKey, stats}) {
             background:isJapan?"rgba(31,111,235,0.08)":"transparent"}}>
             {/* 順位バッジ */}
             <span style={{fontSize:"0.68rem",fontWeight:800,color:rankColor,textAlign:"center"}}>{rank}</span>
-            {/* チーム名 */}
+            {/* チーム名＋確定マーク */}
             <span style={{fontSize:"0.8rem",fontWeight:isJapan?700:400,
               color:isJapan?"#79c0ff":"#e6edf3",
-              overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{t.name}</span>
+              overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
+              {t.name}
+              {clinch&&clinch[t.name]==="first"&&<span title="1位通過確定" style={{marginLeft:3}}>🥇</span>}
+              {clinch&&clinch[t.name]==="advance"&&<span title="突破確定" style={{marginLeft:3}}>✅</span>}
+              {clinch&&clinch[t.name]==="out"&&<span title="敗退確定" style={{marginLeft:3,opacity:0.7}}>❌</span>}
+            </span>
             {/* 勝点（強調） */}
             <span style={{fontFamily:"monospace",fontSize:"0.88rem",fontWeight:800,textAlign:"right",
               color:rank<=2?"#2ea043":rank===3?"#f0883e":"#8b949e"}}>{t.pts}</span>
@@ -269,12 +342,11 @@ function GroupTable({groupKey, stats}) {
 }
 
 // ─── 3位チーム比較順位表 ─────────────────────────────────────────
-function ThirdPlaceTable({groupStats}) {
-  // 各組の3位を抽出（組内順位は勝点→得失点差→総得点）
+function ThirdPlaceTable({groupStats, h2hByGroup}) {
+  // 各組の3位を抽出（組内順位は2026ルール=直接対決優先）
+  // 3位同士の比較は規定通り全体成績（勝点→得失点差→総得点）で行う
   const thirds = Object.entries(groupStats).map(([g, stats])=>{
-    const sorted = stats.map(s=>({
-      ...s, pts: s.w*3+s.d, gd: s.gf-s.ga, played: s.w+s.d+s.l
-    })).sort((a,b)=>b.pts-a.pts||b.gd-a.gd||b.gf-a.gf);
+    const sorted = rankGroup(stats, (h2hByGroup&&h2hByGroup[g])||[]);
     return { group: g, ...sorted[2] };
   }).sort((a,b)=>b.pts-a.pts||b.gd-a.gd||b.gf-a.gf);
 
@@ -665,6 +737,75 @@ export default function App() {
     setGroupStats(fresh);
   },[scores]);
 
+  // 各グループの確定済み直接対決リスト
+  const h2hByGroup = useMemo(()=>{
+    const map = {};
+    Object.keys(GROUPS).forEach(g=>{
+      map[g] = groupH2H(g, scores, GROUP_MATCHES, TEAM_GROUP);
+    });
+    return map;
+  },[scores]);
+
+  // 突破/敗退/1位の「確定」判定
+  // 各グループの未消化試合を全パターン総当たりで展開し、
+  // どの結果でも順位条件が変わらないチームを確定とみなす
+  const clinchByGroup = useMemo(()=>{
+    const result = {}; // {teamName: "first"|"advance"|"out"}
+    Object.keys(GROUPS).forEach(g=>{
+      const teams = GROUPS[g];
+      // このグループの全6試合（固定対戦カード）
+      const fixtures = GROUP_MATCHES.filter(m=>TEAM_GROUP[m.home]===g);
+      // 既知スコアと未消化試合に分ける
+      const known = [];
+      const pending = [];
+      fixtures.forEach(m=>{
+        const sc = scores[m.id];
+        if (sc && sc.h!=null && sc.a!=null) known.push({home:m.home,away:m.away,hs:Number(sc.h),as:Number(sc.a)});
+        else pending.push({home:m.home,away:m.away});
+      });
+      // 未消化が多すぎる場合は計算負荷回避（3^5=243まで。1グループ最大3試合残でも3^3=27）
+      if (pending.length > 4) return; // 確定が出る状況ではないのでスキップ
+      // 各pendingに{勝/分/負}の3通り → スコアは代表値(1-0,0-0,0-1)で近似
+      const outcomes = [[1,0],[0,0],[0,1]];
+      const combos = Math.pow(3, pending.length);
+      // 各チームが取りうる最終順位の集合
+      const possibleRanks = {}; teams.forEach(t=>possibleRanks[t]=new Set());
+
+      for (let c=0; c<combos; c++){
+        // この組み合わせのスコアを構築
+        const sim = [...known];
+        let cc = c;
+        pending.forEach(p=>{
+          const [hs,as_] = outcomes[cc%3]; cc=Math.floor(cc/3);
+          sim.push({home:p.home,away:p.away,hs,as:as_});
+        });
+        // simから各チームstatsを集計
+        const st = {}; teams.forEach(t=>st[t]={name:t,w:0,d:0,l:0,gf:0,ga:0});
+        sim.forEach(gm=>{
+          st[gm.home].gf+=gm.hs; st[gm.home].ga+=gm.as;
+          st[gm.away].gf+=gm.as; st[gm.away].ga+=gm.hs;
+          if(gm.hs>gm.as){st[gm.home].w++;st[gm.away].l++;}
+          else if(gm.hs<gm.as){st[gm.away].w++;st[gm.home].l++;}
+          else {st[gm.home].d++;st[gm.away].d++;}
+        });
+        const ranked = rankGroup(teams.map(t=>st[t]), sim);
+        ranked.forEach((t,idx)=>possibleRanks[t.name].add(idx+1));
+      }
+
+      // 判定: 全パターンで順位が一定範囲なら確定
+      teams.forEach(t=>{
+        const ranks = possibleRanks[t];
+        if (ranks.size===0) return;
+        const max = Math.max(...ranks), min = Math.min(...ranks);
+        if (max===1) result[t]="first";          // 常に1位
+        else if (max<=2) result[t]="advance";     // 常に1〜2位（突破確定）
+        else if (min>=4) result[t]="out";         // 常に4位（敗退確定）
+        // 3位は他グループ次第なので確定扱いにしない
+      });
+    });
+    return result;
+  },[scores]);
+
   // 今日ジャンプ用 ref マップ
   const dateRefs = useRef({});
   const scheduleContainerRef = useRef(null);
@@ -784,9 +925,7 @@ export default function App() {
   const downloadGroupImage = useCallback((groupKey)=>{
     const teams = GROUPS[groupKey];
     const stats = groupStats[groupKey];
-    const rows = stats.map(s=>({
-      ...s, pts:s.w*3+s.d, gd:s.gf-s.ga, played:s.w+s.d+s.l
-    })).sort((a,b)=>b.pts-a.pts||b.gd-a.gd||b.gf-a.gf);
+    const rows = rankGroup(stats, h2hByGroup[groupKey]||[]);
 
     const W = 1000, rowH = 90, headH = 150, footH = 70;
     const H = headH + rowH*4 + footH;
@@ -873,7 +1012,64 @@ export default function App() {
       a.click();
       setTimeout(()=>URL.revokeObjectURL(url), 1000);
     }, "image/png");
-  },[groupStats,today]);
+  },[groupStats,today,h2hByGroup]);
+
+  // 3位チーム比較表を画像化
+  const downloadThirdImage = useCallback(()=>{
+    const thirds = Object.entries(groupStats).map(([g,stats])=>{
+      const sorted = rankGroup(stats, h2hByGroup[g]||[]);
+      return {group:g, ...sorted[2]};
+    }).sort((a,b)=>b.pts-a.pts||b.gd-a.gd||b.gf-a.gf);
+
+    const W=1000, rowH=72, headH=150, footH=70;
+    const H = headH + rowH*12 + footH;
+    const cv=document.createElement("canvas"); cv.width=W; cv.height=H;
+    const ctx=cv.getContext("2d");
+    ctx.fillStyle="#0d1117"; ctx.fillRect(0,0,W,H);
+    ctx.fillStyle="#1f1a00"; ctx.fillRect(0,0,W,headH);
+    ctx.fillStyle="#e6af00"; ctx.font="bold 46px 'Hiragino Sans','Meiryo',sans-serif";
+    ctx.textBaseline="middle";
+    ctx.fillText("🃏 3位チーム比較（上位8チーム進出）", 36, 58);
+    ctx.fillStyle="#8b949e"; ctx.font="26px 'Hiragino Sans','Meiryo',sans-serif";
+    ctx.fillText(`FIFA World Cup 2026 · ${fmtDate(today)}時点`, 38, 112);
+
+    const colX={rank:48,grp:120,team:200,pts:620,played:720,gd:820,gf:920};
+    ctx.fillStyle="#6e7681"; ctx.font="bold 24px sans-serif"; ctx.textAlign="center";
+    ctx.fillText("勝点",colX.pts,headH-18); ctx.fillText("試",colX.played,headH-18);
+    ctx.fillText("差",colX.gd,headH-18); ctx.fillText("得",colX.gf,headH-18);
+
+    thirds.forEach((t,i)=>{
+      const y=headH+rowH*i+rowH/2, rank=i+1, advance=rank<=8;
+      ctx.fillStyle = i%2===0?"#161b22":"#0f141a"; ctx.fillRect(0,headH+rowH*i,W,rowH);
+      // 8位と9位の境界線
+      if(rank===9){ ctx.strokeStyle="#f85149"; ctx.lineWidth=3;
+        ctx.beginPath(); ctx.moveTo(0,headH+rowH*i); ctx.lineTo(W,headH+rowH*i); ctx.stroke(); }
+      ctx.fillStyle=advance?"#2ea043":"#f85149"; ctx.fillRect(0,headH+rowH*i,10,rowH);
+      ctx.fillStyle=advance?"#2ea043":"#f85149"; ctx.font="bold 34px sans-serif"; ctx.textAlign="center";
+      ctx.fillText(rank,colX.rank,y);
+      ctx.fillStyle="#8b949e"; ctx.font="bold 28px sans-serif";
+      ctx.fillText(t.group+"組",colX.grp,y);
+      ctx.fillStyle=advance?"#e6edf3":"#8b949e"; ctx.font="30px 'Hiragino Sans','Meiryo',sans-serif"; ctx.textAlign="left";
+      ctx.fillText(t.name,colX.team,y);
+      ctx.fillStyle=advance?"#2ea043":"#f85149"; ctx.font="bold 38px sans-serif"; ctx.textAlign="center";
+      ctx.fillText(t.pts,colX.pts,y);
+      ctx.fillStyle="#8b949e"; ctx.font="30px sans-serif";
+      ctx.fillText(t.played,colX.played,y);
+      ctx.fillStyle=t.gd>0?"#2ea043":t.gd<0?"#f85149":"#8b949e";
+      ctx.fillText(t.gd>0?`+${t.gd}`:`${t.gd}`,colX.gd,y);
+      ctx.fillStyle="#8b949e"; ctx.fillText(t.gf,colX.gf,y);
+    });
+
+    ctx.textAlign="left"; ctx.font="24px 'Hiragino Sans','Meiryo',sans-serif";
+    ctx.fillStyle="#2ea043"; ctx.fillText("■ 1〜8位 決勝T進出",40,H-38);
+    ctx.fillStyle="#f85149"; ctx.fillText("■ 9〜12位 敗退",420,H-38);
+
+    cv.toBlob(blob=>{
+      const url=URL.createObjectURL(blob);
+      const a=document.createElement("a"); a.href=url; a.download="wc2026_thirdplace.png"; a.click();
+      setTimeout(()=>URL.revokeObjectURL(url),1000);
+    },"image/png");
+  },[groupStats,today,h2hByGroup]);
 
   return (
     <div style={{background:"#0d1117",minHeight:"100vh",color:"#e6edf3",
@@ -1077,11 +1273,12 @@ export default function App() {
             background:"#161b22",borderRadius:8,border:"1px solid #21262d",lineHeight:1.7}}>
             <span style={{color:"#2ea043",fontWeight:700}}>1〜2位</span>：ラウンド32へ直接進出　
             <span style={{color:"#f0883e",fontWeight:700}}>3位</span>：上位<span style={{color:"#e6af00",fontWeight:700}}>8チーム</span>のみ進出<br/>
-            <span style={{fontSize:"0.62rem"}}>3位ランク：①勝点 ②得失点差 ③総得点 ④フェアプレー ⑤FIFAランク</span>
+            <span style={{fontSize:"0.62rem"}}>3位ランク：①勝点 ②得失点差 ③総得点 ④フェアプレー ⑤FIFAランク</span><br/>
+            <span style={{fontSize:"0.62rem"}}>同勝点は直接対決を優先（2026新ルール）／🥇1位確定 ✅突破確定 ❌敗退確定</span>
           </div>
           {Object.keys(GROUPS).map(g=>(
             <div key={g}>
-              <GroupTable groupKey={g} stats={groupStats[g]}/>
+              <GroupTable groupKey={g} stats={groupStats[g]} h2h={h2hByGroup[g]} clinch={clinchByGroup}/>
               <button onClick={()=>downloadGroupImage(g)} style={{
                 background:"#21262d",color:"#58a6ff",border:"1px solid #1f6feb44",
                 borderRadius:6,padding:"5px 12px",fontSize:"0.7rem",cursor:"pointer",
@@ -1090,7 +1287,13 @@ export default function App() {
               </button>
             </div>
           ))}
-          <ThirdPlaceTable groupStats={groupStats}/>
+          <ThirdPlaceTable groupStats={groupStats} h2hByGroup={h2hByGroup}/>
+          <button onClick={downloadThirdImage} style={{
+            background:"#21262d",color:"#e6af00",border:"1px solid #e6af0044",
+            borderRadius:6,padding:"6px 12px",fontSize:"0.72rem",cursor:"pointer",
+            marginTop:8,display:"flex",alignItems:"center",gap:4}}>
+            🖼 3位チーム比較表を画像で保存
+          </button>
         </>}
 
         {/* ===== 決勝Tタブ ===== */}

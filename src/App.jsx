@@ -763,11 +763,13 @@ export default function App() {
         if (sc && sc.h!=null && sc.a!=null) known.push({home:m.home,away:m.away,hs:Number(sc.h),as:Number(sc.a)});
         else pending.push({home:m.home,away:m.away});
       });
-      // 未消化が多すぎる場合は計算負荷回避（3^5=243まで。1グループ最大3試合残でも3^3=27）
-      if (pending.length > 4) return; // 確定が出る状況ではないのでスキップ
-      // 各pendingに{勝/分/負}の3通り → スコアは代表値(1-0,0-0,0-1)で近似
-      const outcomes = [[1,0],[0,0],[0,1]];
-      const combos = Math.pow(3, pending.length);
+      // 未消化が多いと組合せ爆発するため上限を設ける
+      // スコアパターンを5通り(大勝/小勝/引分/小負/大負)にして得失点差の揺れも網羅
+      // 5^4=625 まで許容（残り4試合）。それ以上は確定が出る状況ではないのでスキップ
+      if (pending.length > 4) return;
+      const outcomes = [[2,0],[1,0],[1,1],[0,1],[0,2]];
+      const base = outcomes.length;
+      const combos = Math.pow(base, pending.length);
       // 各チームが取りうる最終順位の集合
       const possibleRanks = {}; teams.forEach(t=>possibleRanks[t]=new Set());
 
@@ -776,7 +778,7 @@ export default function App() {
         const sim = [...known];
         let cc = c;
         pending.forEach(p=>{
-          const [hs,as_] = outcomes[cc%3]; cc=Math.floor(cc/3);
+          const [hs,as_] = outcomes[cc%base]; cc=Math.floor(cc/base);
           sim.push({home:p.home,away:p.away,hs,as:as_});
         });
         // simから各チームstatsを集計

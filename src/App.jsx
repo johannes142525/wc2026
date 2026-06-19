@@ -101,7 +101,7 @@ const GROUP_MATCHES = [
   { id:"g004", date:"2026-06-13",time:"10:00",home:"🇺🇸 アメリカ",away:"🇵🇾 パラグアイ",group:"D組1節",tv:[] },
   { id:"g005", date:"2026-06-14",time:"04:00",home:"🇶🇦 カタール",away:"🇨🇭 スイス",group:"B組1節",tv:[] },
   { id:"g006", date:"2026-06-14",time:"07:00",home:"🇧🇷 ブラジル",away:"🇲🇦 モロッコ",group:"C組1節",tv:[] },
-  { id:"g007", date:"2026-06-14",time:"10:00",home:"🏴󠁧󠁢󠁳󠁣󠁴󠁿 スコットランド",away:"🇭🇹 ハイチ",group:"C組1節",tv:["NHK"] },
+  { id:"g007", date:"2026-06-14",time:"10:00",home:"🇭🇹 ハイチ",away:"🏴󠁧󠁢󠁳󠁣󠁴󠁿 スコットランド",group:"C組1節",tv:["NHK"] },
   { id:"g008", date:"2026-06-14",time:"13:00",home:"🇦🇺 オーストラリア",away:"🇹🇷 トルコ",group:"D組1節",tv:["日本テレビ"] },
   { id:"g009", date:"2026-06-15",time:"02:00",home:"🇩🇪 ドイツ",away:"🇨🇼 キュラソー",group:"E組1節",tv:[] },
   { id:"g010", date:"2026-06-15",time:"05:00",home:"🇳🇱 オランダ",away:"🇯🇵 日本",group:"F組1節",tv:["NHK"],japan:true },
@@ -634,24 +634,34 @@ export default function App() {
     return s;
   });
 
-  // スコアが更新されたら順位表に自動反映
+  // スコアが更新されたら、全試合を集計して順位表を作り直す（累積）
   useEffect(()=>{
+    // まっさらな初期stats
+    const fresh = {};
+    Object.entries(GROUPS).forEach(([k,teams])=>{ fresh[k]=makeInitialStats(teams); });
+
+    // 全グループ試合のスコアを走査して加算
     Object.entries(scores).forEach(([id, sc])=>{
       const m = GROUP_MATCHES.find(x=>x.id===id);
       if (!m) return;
       const hv = parseInt(sc.h), av = parseInt(sc.a);
       if (isNaN(hv)||isNaN(av)) return;
-      const hGroup = TEAM_GROUP[m.home];
-      if (!hGroup) return;
-      setGroupStats(prev=>{
-        const arr = prev[hGroup].map(t=>{
-          if (t.name===m.home) { const w=hv>av?1:0,d=hv===av?1:0,l=hv<av?1:0; return {...t,w,d,l,gf:hv,ga:av}; }
-          if (t.name===m.away) { const w=av>hv?1:0,d=av===hv?1:0,l=av<hv?1:0; return {...t,w,d,l,gf:av,ga:hv}; }
-          return t;
-        });
-        return {...prev,[hGroup]:arr};
-      });
+      const g = TEAM_GROUP[m.home];
+      if (!g || g!==TEAM_GROUP[m.away]) return; // 同一グループの試合のみ
+      const arr = fresh[g];
+      const hi = arr.findIndex(t=>t.name===m.home);
+      const ai = arr.findIndex(t=>t.name===m.away);
+      if (hi<0||ai<0) return;
+      // ホーム加算
+      arr[hi] = {...arr[hi],
+        w: arr[hi].w + (hv>av?1:0), d: arr[hi].d + (hv===av?1:0), l: arr[hi].l + (hv<av?1:0),
+        gf: arr[hi].gf + hv, ga: arr[hi].ga + av};
+      // アウェイ加算
+      arr[ai] = {...arr[ai],
+        w: arr[ai].w + (av>hv?1:0), d: arr[ai].d + (av===hv?1:0), l: arr[ai].l + (av<hv?1:0),
+        gf: arr[ai].gf + av, ga: arr[ai].ga + hv};
     });
+    setGroupStats(fresh);
   },[scores]);
 
   // 今日ジャンプ用 ref マップ

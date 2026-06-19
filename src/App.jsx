@@ -508,6 +508,7 @@ export default function App() {
   const [filter, setFilter] = useState("all");
   const [phase, setPhase]   = useState("all");
   const [tweetOpen, setTweetOpen] = useState(false);
+  const [postMode, setPostMode] = useState("tomorrow"); // tomorrow | result
   const [copied, setCopied] = useState(false);
   const [spoiler, setSpoiler] = useState(false); // ネタバレ防止
 
@@ -755,7 +756,124 @@ export default function App() {
     return `⚽ #W杯2026 明日の試合\n\n${blocks.join("\n\n")}\n\n#FIFAWorldCup`;
   },[tomorrowMatches]);
 
+  // 「本日」= JST当日の、スコアが確定している試合の結果
+  const todayResults = useMemo(()=>{
+    const today = todayJST();
+    return allMatches
+      .filter(m=>dispDate(m.date,m.time)===today && m.id && scores[m.id]
+        && scores[m.id].h!=null && scores[m.id].a!=null)
+      .sort((a,b)=>koDate(a.date,a.time)-koDate(b.date,b.time));
+  },[allMatches,scores]);
+
+  const resultTweetText = useMemo(()=>{
+    if (!todayResults.length) return "";
+    const today = todayJST();
+    const rows = todayResults.map(m=>{
+      const sc = scores[m.id];
+      const label = (m.group||"").replace(/\d+節$/,"");
+      // 勝者を太字代わりに🏆で示す
+      const mark = sc.h>sc.a ? "◀" : sc.h<sc.a ? "▶" : "＝";
+      return `${m.home} ${sc.h}-${sc.a} ${m.away}（${label}）`;
+    });
+    return `⚽ #W杯2026 本日の結果\n${fmtDate(today)}\n\n${rows.join("\n")}\n\n#FIFAWorldCup`;
+  },[todayResults,scores]);
+
   const today = todayJST();
+
+  // 順位表を canvas に描画して画像ダウンロード
+  const downloadGroupImage = useCallback((groupKey)=>{
+    const teams = GROUPS[groupKey];
+    const stats = groupStats[groupKey];
+    const rows = stats.map(s=>({
+      ...s, pts:s.w*3+s.d, gd:s.gf-s.ga, played:s.w+s.d+s.l
+    })).sort((a,b)=>b.pts-a.pts||b.gd-a.gd||b.gf-a.gf);
+
+    const W = 1000, rowH = 90, headH = 150, footH = 70;
+    const H = headH + rowH*4 + footH;
+    const cv = document.createElement("canvas");
+    cv.width = W; cv.height = H;
+    const ctx = cv.getContext("2d");
+
+    // 背景
+    ctx.fillStyle = "#0d1117"; ctx.fillRect(0,0,W,H);
+    // ヘッダー帯
+    ctx.fillStyle = "#1a2e1a"; ctx.fillRect(0,0,W,headH);
+    ctx.fillStyle = "#2ea043";
+    ctx.font = "bold 52px 'Hiragino Sans','Meiryo',sans-serif";
+    ctx.textBaseline = "middle";
+    ctx.fillText(`⚽ ${groupKey}組 順位表`, 40, 60);
+    ctx.fillStyle = "#8b949e";
+    ctx.font = "28px 'Hiragino Sans','Meiryo',sans-serif";
+    ctx.fillText(`FIFA World Cup 2026 · ${fmtDate(today)}時点`, 42, 115);
+
+    // 列ヘッダー
+    const colX = { rank:50, team:120, pts:560, played:660, w:740, d:810, l:880, gd:960 };
+    ctx.fillStyle = "#6e7681";
+    ctx.font = "bold 26px sans-serif";
+    ctx.textAlign = "center";
+    ctx.fillText("勝点", colX.pts, headH-20);
+    ctx.fillText("試", colX.played, headH-20);
+    ctx.fillText("勝", colX.w, headH-20);
+    ctx.fillText("分", colX.d, headH-20);
+    ctx.fillText("負", colX.l, headH-20);
+    ctx.fillText("差", colX.gd, headH-20);
+
+    // 各行
+    rows.forEach((t,i)=>{
+      const y = headH + rowH*i + rowH/2;
+      const rank = i+1;
+      const advance = rank<=2;
+      const third = rank===3;
+      // 行背景
+      ctx.fillStyle = i%2===0 ? "#161b22" : "#0f141a";
+      ctx.fillRect(0, headH+rowH*i, W, rowH);
+      // 進出ステータスの左帯
+      ctx.fillStyle = advance ? "#2ea043" : third ? "#f0883e" : "#6e7681";
+      ctx.fillRect(0, headH+rowH*i, 10, rowH);
+      // 順位
+      ctx.fillStyle = advance ? "#2ea043" : third ? "#f0883e" : "#6e7681";
+      ctx.font = "bold 40px sans-serif";
+      ctx.textAlign = "center";
+      ctx.fillText(rank, colX.rank, y);
+      // チーム名（絵文字含む）
+      ctx.fillStyle = "#e6edf3";
+      ctx.font = "36px 'Hiragino Sans','Meiryo',sans-serif";
+      ctx.textAlign = "left";
+      ctx.fillText(t.name, colX.team, y);
+      // 勝点（強調）
+      ctx.fillStyle = advance ? "#2ea043" : third ? "#f0883e" : "#e6edf3";
+      ctx.font = "bold 44px sans-serif";
+      ctx.textAlign = "center";
+      ctx.fillText(t.pts, colX.pts, y);
+      // 試勝分負
+      ctx.fillStyle = "#8b949e";
+      ctx.font = "34px sans-serif";
+      ctx.fillText(t.played, colX.played, y);
+      ctx.fillText(t.w, colX.w, y);
+      ctx.fillText(t.d, colX.d, y);
+      ctx.fillText(t.l, colX.l, y);
+      // 得失点差
+      ctx.fillStyle = t.gd>0?"#2ea043":t.gd<0?"#f85149":"#8b949e";
+      ctx.fillText(t.gd>0?`+${t.gd}`:`${t.gd}`, colX.gd, y);
+    });
+
+    // フッター凡例
+    ctx.textAlign = "left";
+    ctx.font = "24px 'Hiragino Sans','Meiryo',sans-serif";
+    ctx.fillStyle = "#2ea043"; ctx.fillText("■ 1〜2位 突破", 40, H-38);
+    ctx.fillStyle = "#f0883e"; ctx.fillText("■ 3位 プレーオフ圏", 280, H-38);
+    ctx.fillStyle = "#6e7681"; ctx.fillText("■ 4位 敗退", 600, H-38);
+
+    // ダウンロード
+    cv.toBlob(blob=>{
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `wc2026_group${groupKey}.png`;
+      a.click();
+      setTimeout(()=>URL.revokeObjectURL(url), 1000);
+    }, "image/png");
+  },[groupStats,today]);
 
   return (
     <div style={{background:"#0d1117",minHeight:"100vh",color:"#e6edf3",
@@ -870,19 +988,33 @@ export default function App() {
             {apiStatus==="error"&&<span>⚠️ 自動取得失敗。終了試合のスコアをタップで手動入力できます</span>}
           </div>
 
-          {/* フローティングXポストボタン（スクロール追従） */}
-          <button onClick={()=>setTweetOpen(true)} style={{
-            position:"fixed",right:16,bottom:20,zIndex:20,
-            background:"#1d9bf0",color:"#fff",border:"none",borderRadius:28,
-            padding:"12px 18px",fontSize:"0.82rem",fontWeight:700,cursor:"pointer",
-            boxShadow:"0 4px 14px rgba(0,0,0,0.5)",
-            display:"flex",alignItems:"center",gap:6}}>
-            𝕏 明日の試合をポスト
-            {tomorrowMatches.length>0&&<span style={{background:"#fff",color:"#1d9bf0",
-              borderRadius:"50%",width:18,height:18,fontSize:"0.66rem",
-              display:"flex",alignItems:"center",justifyContent:"center",fontWeight:800}}>
-              {tomorrowMatches.length}</span>}
-          </button>
+          {/* フローティングXポストボタン（スクロール追従・2種） */}
+          <div style={{position:"fixed",right:16,bottom:20,zIndex:20,
+            display:"flex",flexDirection:"column",gap:8,alignItems:"flex-end"}}>
+            {todayResults.length>0&&(
+              <button onClick={()=>{setPostMode("result");setTweetOpen(true);}} style={{
+                background:"#2ea043",color:"#fff",border:"none",borderRadius:28,
+                padding:"10px 16px",fontSize:"0.78rem",fontWeight:700,cursor:"pointer",
+                boxShadow:"0 4px 14px rgba(0,0,0,0.5)",
+                display:"flex",alignItems:"center",gap:6}}>
+                𝕏 本日の結果
+                <span style={{background:"#fff",color:"#2ea043",borderRadius:"50%",
+                  width:18,height:18,fontSize:"0.66rem",display:"flex",alignItems:"center",
+                  justifyContent:"center",fontWeight:800}}>{todayResults.length}</span>
+              </button>
+            )}
+            <button onClick={()=>{setPostMode("tomorrow");setTweetOpen(true);}} style={{
+              background:"#1d9bf0",color:"#fff",border:"none",borderRadius:28,
+              padding:"10px 16px",fontSize:"0.78rem",fontWeight:700,cursor:"pointer",
+              boxShadow:"0 4px 14px rgba(0,0,0,0.5)",
+              display:"flex",alignItems:"center",gap:6}}>
+              𝕏 明日の試合
+              {tomorrowMatches.length>0&&<span style={{background:"#fff",color:"#1d9bf0",
+                borderRadius:"50%",width:18,height:18,fontSize:"0.66rem",
+                display:"flex",alignItems:"center",justifyContent:"center",fontWeight:800}}>
+                {tomorrowMatches.length}</span>}
+            </button>
+          </div>
 
           {/* ポストモーダル */}
           {tweetOpen&&(
@@ -890,27 +1022,46 @@ export default function App() {
               position:"fixed",inset:0,zIndex:30,background:"rgba(0,0,0,0.6)",
               display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
               <div onClick={e=>e.stopPropagation()} style={{
-                background:"#161b22",border:"1px solid #1d9bf0",borderRadius:12,
-                padding:16,maxWidth:520,width:"100%",maxHeight:"80vh",overflow:"auto"}}>
+                background:"#161b22",border:`1px solid ${postMode==="result"?"#2ea043":"#1d9bf0"}`,borderRadius:12,
+                padding:16,maxWidth:520,width:"100%",maxHeight:"82vh",overflow:"auto"}}>
                 <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
-                  <span style={{fontSize:"0.9rem",fontWeight:800,color:"#1d9bf0"}}>𝕏 明日の試合をポスト</span>
+                  <span style={{fontSize:"0.9rem",fontWeight:800,color:postMode==="result"?"#2ea043":"#1d9bf0"}}>
+                    {postMode==="result"?"𝕏 本日の結果をポスト":"𝕏 明日の試合をポスト"}</span>
                   <button onClick={()=>setTweetOpen(false)} style={{background:"none",border:"none",
                     color:"#8b949e",fontSize:"1.2rem",cursor:"pointer",lineHeight:1}}>×</button>
                 </div>
-                {tomorrowMatches.length===0
-                  ?<div style={{color:"#8b949e",fontSize:"0.82rem"}}>明日の試合はありません</div>
+                {/* モード切替タブ */}
+                <div style={{display:"flex",gap:6,marginBottom:12}}>
+                  <button onClick={()=>setPostMode("tomorrow")} style={{
+                    flex:1,background:postMode==="tomorrow"?"#1d9bf0":"#21262d",
+                    color:postMode==="tomorrow"?"#fff":"#8b949e",border:"none",borderRadius:6,
+                    padding:"6px",fontSize:"0.74rem",cursor:"pointer",fontWeight:700}}>明日の試合</button>
+                  <button onClick={()=>setPostMode("result")} style={{
+                    flex:1,background:postMode==="result"?"#2ea043":"#21262d",
+                    color:postMode==="result"?"#fff":"#8b949e",border:"none",borderRadius:6,
+                    padding:"6px",fontSize:"0.74rem",cursor:"pointer",fontWeight:700}}>本日の結果</button>
+                </div>
+                {(postMode==="result"?todayResults:tomorrowMatches).length===0
+                  ?<div style={{color:"#8b949e",fontSize:"0.82rem"}}>
+                    {postMode==="result"?"本日の確定結果はまだありません":"明日の試合はありません"}</div>
                   :<>
                     <pre style={{fontFamily:"inherit",fontSize:"0.78rem",color:"#e6edf3",
                       whiteSpace:"pre-wrap",margin:"0 0 12px",lineHeight:1.65,
-                      background:"#0d1117",padding:10,borderRadius:8,border:"1px solid #21262d"}}>{tweetText}</pre>
+                      background:"#0d1117",padding:10,borderRadius:8,border:"1px solid #21262d"}}>
+                      {postMode==="result"?resultTweetText:tweetText}</pre>
+                    {postMode==="result"&&(
+                      <div style={{fontSize:"0.68rem",color:"#e6af00",marginBottom:10,lineHeight:1.5}}>
+                        💡 順位表タブで各グループの画像を保存し、このポストに添付すると分かりやすくなります
+                      </div>
+                    )}
                     <div style={{display:"flex",gap:8}}>
-                      <button onClick={()=>{navigator.clipboard.writeText(tweetText);
+                      <button onClick={()=>{navigator.clipboard.writeText(postMode==="result"?resultTweetText:tweetText);
                         setCopied(true);setTimeout(()=>setCopied(false),2000);}} style={{
                         background:"#21262d",color:copied?"#2ea043":"#e6edf3",
                         border:"1px solid #30363d",borderRadius:8,padding:"7px 14px",
                         fontSize:"0.78rem",cursor:"pointer",flex:1}}>{copied?"✓ コピー済":"📋 コピー"}</button>
-                      <button onClick={()=>window.open(`https://x.com/intent/tweet?text=${encodeURIComponent(tweetText)}`,"_blank")} style={{
-                        background:"#1d9bf0",color:"#fff",border:"none",borderRadius:8,
+                      <button onClick={()=>window.open(`https://x.com/intent/tweet?text=${encodeURIComponent(postMode==="result"?resultTweetText:tweetText)}`,"_blank")} style={{
+                        background:postMode==="result"?"#2ea043":"#1d9bf0",color:"#fff",border:"none",borderRadius:8,
                         padding:"7px 14px",fontSize:"0.78rem",cursor:"pointer",fontWeight:700,flex:1}}>
                         𝕏 ポストする</button>
                     </div>
@@ -929,7 +1080,15 @@ export default function App() {
             <span style={{fontSize:"0.62rem"}}>3位ランク：①勝点 ②得失点差 ③総得点 ④フェアプレー ⑤FIFAランク</span>
           </div>
           {Object.keys(GROUPS).map(g=>(
-            <GroupTable key={g} groupKey={g} stats={groupStats[g]}/>
+            <div key={g}>
+              <GroupTable groupKey={g} stats={groupStats[g]}/>
+              <button onClick={()=>downloadGroupImage(g)} style={{
+                background:"#21262d",color:"#58a6ff",border:"1px solid #1f6feb44",
+                borderRadius:6,padding:"5px 12px",fontSize:"0.7rem",cursor:"pointer",
+                marginTop:-4,marginBottom:12,display:"flex",alignItems:"center",gap:4}}>
+                🖼 {g}組の順位表を画像で保存
+              </button>
+            </div>
           ))}
           <ThirdPlaceTable groupStats={groupStats}/>
         </>}

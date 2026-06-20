@@ -532,11 +532,18 @@ function MatchRow({m, now, scores, spoiler, onManualScore}) {
 }
 
 // ─── 決勝T行 ─────────────────────────────────────────────────────
-function BracketRow({s, now}) {
+function BracketRow({s, now, slotTeam}) {
   const isThird = s.away&&s.away.startsWith("3rd_");
   const thirdGs = isThird ? s.away.replace("3rd_","").split("").join("・") : null;
-  const homeL   = resolveSlot(s.home||"—");
-  const awayL   = isThird ? "3位通過枠" : resolveSlot(s.away||"TBD");
+  // 確定済みスロットなら実チーム名、未確定なら「A組1位」等のプレースホルダ
+  const resolveWithTeam = (key) => {
+    if (slotTeam && slotTeam[key]) return slotTeam[key];
+    return resolveSlot(key||"—");
+  };
+  const homeL   = resolveWithTeam(s.home);
+  const awayL   = isThird ? "3位通過枠" : resolveWithTeam(s.away||"TBD");
+  const homeFixed = slotTeam && s.home && slotTeam[s.home];
+  const awayFixed = slotTeam && s.away && slotTeam[s.away];
   const td  = dispDate(s.date,s.time);
   const ko  = koDate(s.date,s.time);
   const end = new Date(ko.getTime()+110*60*1000);
@@ -553,7 +560,9 @@ function BracketRow({s, now}) {
         <div style={{flex:1,minWidth:0}}>
           <div style={{fontSize:"0.68rem",color:"#8b949e",marginBottom:1}}>{s.label||`M${s.match}`}</div>
           <div style={{fontSize:"0.8rem",fontWeight:700,color:"#e6edf3"}}>
-            {homeL}<span style={{color:"#8b949e",margin:"0 4px",fontWeight:400,fontSize:"0.72rem"}}>vs</span>{awayL}
+            <span style={{color:homeFixed?"#79c0ff":"#e6edf3"}}>{homeL}</span>
+            <span style={{color:"#8b949e",margin:"0 4px",fontWeight:400,fontSize:"0.72rem"}}>vs</span>
+            <span style={{color:awayFixed?"#79c0ff":"#e6edf3"}}>{awayL}</span>
           </div>
           {isThird&&<div style={{fontSize:"0.62rem",color:"#e6af00",marginTop:2,
             background:"#1f1a00",border:"1px solid #3a3000",borderRadius:3,
@@ -749,8 +758,9 @@ export default function App() {
   // 突破/敗退/1位の「確定」判定
   // 各グループの未消化試合を全パターン総当たりで展開し、
   // どの結果でも順位条件が変わらないチームを確定とみなす
-  const clinchByGroup = useMemo(()=>{
+  const clinchData = useMemo(()=>{
     const result = {}; // {teamName: "first"|"advance"|"out"}
+    const slotTeam = {}; // {"A1":"🇲🇽 メキシコ", ...} 順位が一意に確定したスロットのみ
     Object.keys(GROUPS).forEach(g=>{
       const teams = GROUPS[g];
       // このグループの全6試合（固定対戦カード）
@@ -804,10 +814,18 @@ export default function App() {
         else if (max<=2) result[t]="advance";     // 常に1〜2位（突破確定）
         else if (min>=4) result[t]="out";         // 常に4位（敗退確定）
         // 3位は他グループ次第なので確定扱いにしない
+        // 順位が一意に確定（取りうる順位が1つだけ）なら決勝Tスロットに反映
+        if (ranks.size===1) {
+          const fixedRank = min; // = max
+          if (fixedRank===1) slotTeam[g+"1"] = t;
+          else if (fixedRank===2) slotTeam[g+"2"] = t;
+        }
       });
     });
-    return result;
+    return { result, slotTeam };
   },[scores]);
+  const clinchByGroup = clinchData.result;
+  const slotTeam = clinchData.slotTeam;
 
   // 今日ジャンプ用 ref マップ
   const dateRefs = useRef({});
@@ -977,11 +995,13 @@ export default function App() {
       ctx.font = "bold 40px sans-serif";
       ctx.textAlign = "center";
       ctx.fillText(rank, colX.rank, y);
-      // チーム名（絵文字含む）
+      // チーム名（絵文字含む）＋確定マーク
       ctx.fillStyle = "#e6edf3";
       ctx.font = "36px 'Hiragino Sans','Meiryo',sans-serif";
       ctx.textAlign = "left";
-      ctx.fillText(t.name, colX.team, y);
+      const cl = clinchByGroup[t.name];
+      const mark = cl==="first"?" 🥇":cl==="advance"?" ✅":cl==="out"?" ❌":"";
+      ctx.fillText(t.name + mark, colX.team, y);
       // 勝点（強調）
       ctx.fillStyle = advance ? "#2ea043" : third ? "#f0883e" : "#e6edf3";
       ctx.font = "bold 44px sans-serif";
@@ -1015,7 +1035,7 @@ export default function App() {
       a.click();
       setTimeout(()=>URL.revokeObjectURL(url), 1000);
     }, "image/png");
-  },[groupStats,today,h2hByGroup]);
+  },[groupStats,today,h2hByGroup,clinchByGroup]);
 
   // 3位チーム比較表を画像化
   const downloadThirdImage = useCallback(()=>{
@@ -1313,7 +1333,7 @@ export default function App() {
                 padding:"4px 0",borderBottom:"1px solid #21262d",marginBottom:5}}>
                 {label}
               </div>
-              {slots.map((s,i)=><BracketRow key={i} s={s} now={now}/>)}
+              {slots.map((s,i)=><BracketRow key={i} s={s} now={now} slotTeam={slotTeam}/>)}
             </div>
           ))}
           <div style={{background:"#161b22",border:"1px solid #30363d",borderRadius:8,padding:12,marginTop:4}}>
